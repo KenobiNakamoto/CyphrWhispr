@@ -89,13 +89,23 @@ struct PillView: View {
     private static let pillHeight: CGFloat = 48
 
     var body: some View {
-        let shape = Capsule(style: .continuous)
+        Group {
+            if case .spawning(let progress) = viewModel.phase {
+                spawnBody(progress: progress)
+            } else {
+                normalBody
+            }
+        }
+        .padding(EdgeInsets(top: 36, leading: 36, bottom: 48, trailing: 36))
+    }
 
-        return HStack(alignment: .center, spacing: 7) {
-            // Small invisible spacer so the triangle/circle group sits a bit
-            // further to the right of the pill's left edge — the user wanted
-            // breathing room on the left of the triangle without changing the
-            // overall pill padding.
+    /// The existing pill content — used in every phase except `.spawning`.
+    /// Logic identical to the pre-spawn version of `body`; just lifted into
+    /// its own computed property so we can swap whole layouts cleanly.
+    @ViewBuilder
+    private var normalBody: some View {
+        let shape = Capsule(style: .continuous)
+        HStack(alignment: .center, spacing: 7) {
             Color.clear.frame(width: 8, height: 1)
 
             DownTriangle()
@@ -116,29 +126,78 @@ struct PillView: View {
 
             WaveformView(level: viewModel.level, phase: viewModel.phase)
                 .frame(maxWidth: .infinity)
-                // 40 instead of 30 so the centre bar can actually punch tall on
-                // loud speech without being clipped by the waveform frame.
                 .frame(height: 40)
         }
         .padding(.horizontal, 14)
         .frame(width: Self.pillWidth, height: Self.pillHeight)
-        // Solid pure-black body (#000) — no gradients, no inset effects.
         .background(shape.fill(Color.black))
-        // The rim does all the visual work, drawn on top of the body so colours
-        // sit on the edge.
         .overlay(RimHighlights(phase: viewModel.phase,
                                level: viewModel.level,
                                accent: prefs.accent,
                                accentSecondary: prefs.accentSecondary))
-        // Drop shadow for depth; intentionally neutral (no violet bleed).
         .shadow(color: .black.opacity(0.50), radius: 16, x: 0, y: 8)
         .shadow(color: .black.opacity(0.20), radius: 3, x: 0, y: 1)
-        // Generous outer padding so the drop shadow's soft tail (radius 16,
-        // y-offset 8) has room to fully fade to alpha 0 before reaching the
-        // panel edge. Bumped ~30% larger after the previous margin still let
-        // a faint rectangular silhouette show at the very edge of the soft
-        // shadow's fall-off.
-        .padding(EdgeInsets(top: 36, leading: 36, bottom: 48, trailing: 36))
+    }
+
+    /// Renders the pill mid-spawn: figures positioned by absolute offsets
+    /// inside a width-animated capsule, bars individually positioned (so
+    /// their reveal cascade is independent of the HStack flow), and the
+    /// comet rim faded in via the rimOpacity multiplier.
+    @ViewBuilder
+    private func spawnBody(progress: Double) -> some View {
+        let s = SpawnTimeline.state(at: progress)
+        let shape = Capsule(style: .continuous)
+
+        ZStack(alignment: .leading) {
+            // Capsule body — pure black, animated width.
+            shape
+                .fill(Color.black)
+                .frame(width: s.pillWidth, height: Self.pillHeight)
+
+            // Triangle — absolute positioning by SpawnTimeline.triangleX
+            DownTriangle()
+                .fill(Color.white)
+                .frame(width: 18, height: 16)
+                .opacity(s.figureOpacity)
+                .scaleEffect(s.figureScale)
+                .offset(x: s.triangleX,
+                        y: (Self.pillHeight - 16) / 2)
+
+            // Circle — absolute positioning by SpawnTimeline.dotX
+            Circle()
+                .fill(Color.white)
+                .frame(width: 17, height: 17)
+                .opacity(s.figureOpacity)
+                .scaleEffect(s.figureScale)
+                .offset(x: s.dotX,
+                        y: (Self.pillHeight - 17) / 2)
+
+            // Bars — five individual rectangles at fixed columns to the
+            // right of the circle's final position. Bar columns are derived
+            // by spreading evenly across the waveform area
+            // (left = 70 → right = 156, production scale).
+            ForEach(0..<5, id: \.self) { i in
+                let column: CGFloat = 70 + CGFloat(i) * (86 / 4)  // 70, 91.5, 113, 134.5, 156
+                let barHeight: CGFloat = (i == 2) ? 14 : 6  // centre bar taller
+                Rectangle()
+                    .fill(Color.white)
+                    .frame(width: 2, height: barHeight)
+                    .opacity(s.barOpacities[i])
+                    .offset(x: column,
+                            y: (Self.pillHeight - barHeight) / 2)
+            }
+        }
+        .frame(width: Self.pillWidth, height: Self.pillHeight, alignment: .leading)
+        // Rim halo only after ignite — opacity ramps 0 → 1 in the ignite phase
+        .overlay(
+            RimHighlights(phase: .listening,  // pretend listening so the comet runs
+                          level: 0.0,
+                          accent: prefs.accent,
+                          accentSecondary: prefs.accentSecondary)
+                .opacity(s.rimOpacity)
+        )
+        .shadow(color: .black.opacity(0.50 * s.figureOpacity), radius: 16, x: 0, y: 8)
+        .shadow(color: .black.opacity(0.20 * s.figureOpacity), radius: 3, x: 0, y: 1)
     }
 }
 
@@ -243,6 +302,22 @@ private struct DownTriangle: Shape {
     let vm = PillViewModel()
     vm.phase = .listening
     vm.level = 0.55
+    return PillView(viewModel: vm)
+        .frame(width: 260, height: 120)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+}
+
+#Preview("Spawning - mid push") {
+    let vm = PillViewModel()
+    vm.phase = .spawning(progress: 0.40)
+    return PillView(viewModel: vm)
+        .frame(width: 260, height: 120)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+}
+
+#Preview("Spawning - traverse") {
+    let vm = PillViewModel()
+    vm.phase = .spawning(progress: 0.70)
     return PillView(viewModel: vm)
         .frame(width: 260, height: 120)
         .background(Color(red: 0.05, green: 0.05, blue: 0.07))
