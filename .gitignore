@@ -28,3 +28,4 @@ models/
 
 # AI assistant scratch + planning notes (local-only)
 .claude/
+.superpowers/

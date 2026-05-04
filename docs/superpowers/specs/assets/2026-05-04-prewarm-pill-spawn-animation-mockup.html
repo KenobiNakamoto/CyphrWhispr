@@ -1,0 +1,283 @@
+<h2>Pre-warm pill — cinematic v5</h2>
+<p class="subtitle">Both figures spawn at the centre (fade in + scale up combined). They <strong>both</strong> push outward to the edges — triangle leftward, circle rightward — opening the pill between them. Once they reach the extremes, the circle reverses and glides back leftward to meet the triangle. Bars cascade in behind the returning circle. Comet ignites. ~3.6s.</p>
+
+<style>
+  .stage {
+    background: linear-gradient(180deg, #1a1a22 0%, #0a0a0d 100%);
+    border-radius: 16px;
+    height: 360px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .replay-btn {
+    position: absolute;
+    bottom: 14px;
+    right: 14px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.14);
+    color: rgba(255,255,255,0.9);
+    padding: 7px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    z-index: 10;
+  }
+  .replay-btn:hover { background: rgba(255,255,255,0.14); }
+  .timing-readout {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    color: rgba(255,255,255,0.45);
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    z-index: 5;
+  }
+
+  /* Pill: centred in stage via flexbox. Width animates 90 → 340, growing
+     symmetrically so both edges move outward. The figures push OPPOSITE
+     directions to drive the expansion visually. */
+  .pill {
+    position: relative;
+    height: 96px;
+    background: #000;
+    border-radius: 48px;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.7);
+    overflow: hidden;
+    width: 90px;
+
+    animation:
+      pillExpand 3.6s cubic-bezier(0.16, 0.84, 0.30, 1) forwards,
+      pillBreathe 3.6s ease-in-out forwards;
+  }
+
+  @keyframes pillExpand {
+    /* Phase 0 (0 → 17% / 0 → 0.6s): figures fade in at centre, pill is seed (90px) */
+    0%   { width: 90px; }
+    17%  { width: 90px; }
+    /* Anticipation (17 → 24% / 0.6 → 0.85s): seed compresses ~6px, figures lean inward */
+    24%  { width: 84px; }
+    /* Push (24 → 47% / 0.85 → 1.7s): figures shove apart, pill widens to full */
+    47%  { width: 340px; }
+    /* Hold + traverse + ignite all stay at full width */
+    100% { width: 340px; }
+  }
+
+  /* Subtle whole-pill scale-up at the push apex */
+  @keyframes pillBreathe {
+    0%, 17% { transform: scale(1); }
+    47%     { transform: scale(1.02); }
+    100%    { transform: scale(1); }
+  }
+
+  /* Figures positioned absolutely inside the pill. Their `left` values are
+     relative to the pill's left edge — as the pill widens (left edge moving
+     leftward in stage coords), the figures track with it AND animate to new
+     relative positions. */
+  .triangle, .dot {
+    position: absolute;
+    top: 50%;
+    background: white;
+    z-index: 3;
+    opacity: 0;
+  }
+
+  /* Triangle: spawns at relative left=7 inside the 90px seed (just left of
+     the seed's centre). Pushes leftward to relative left=44 — its final
+     position inside the full-width pill (which by then has expanded leftward
+     in stage coords, putting the triangle near the left edge of the pill). */
+  .triangle {
+    width: 36px;
+    height: 32px;
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+    left: 7px;
+    transform: translateY(-50%) scale(0.5);
+    animation: triSpawnAndPush 3.6s cubic-bezier(0.16, 0.84, 0.30, 1) forwards;
+  }
+
+  /* Circle: spawns at relative left=50 inside the seed (just right of centre,
+     side-by-side with the triangle, not overlapping). Pushes rightward to
+     relative left=270 — far right edge of the expanded pill. Holds. Then
+     traverses leftward to relative left=92 — its final position next to the
+     triangle. */
+  .dot {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    left: 50px;
+    transform: translateY(-50%) scale(0.5);
+    animation: dotSpawnPushAndTraverse 3.6s cubic-bezier(0.16, 0.84, 0.30, 1) forwards;
+    animation-delay: 60ms;
+  }
+
+  @keyframes triSpawnAndPush {
+    /* Phase 0 (0 → 17%): fade in + scale up at centre */
+    0%   { opacity: 0; left: 7px; transform: translateY(-50%) scale(0.5); }
+    17%  { opacity: 1; left: 7px; transform: translateY(-50%) scale(1); }
+    /* Anticipation: tiny inward lean (rightward, toward circle) */
+    24%  { opacity: 1; left: 10px; transform: translateY(-50%) scale(0.97); }
+    /* Push leftward: triangle slides to its final position, opening the
+       LEFT side of the pill */
+    47%  { opacity: 1; left: 44px; transform: translateY(-50%) scale(1); }
+    100% { opacity: 1; left: 44px; transform: translateY(-50%) scale(1); }
+  }
+
+  @keyframes dotSpawnPushAndTraverse {
+    /* Phase 0: fade in + scale up at centre (just right of triangle) */
+    0%   { opacity: 0; left: 50px; transform: translateY(-50%) scale(0.5); }
+    17%  { opacity: 1; left: 50px; transform: translateY(-50%) scale(1); }
+    /* Anticipation: tiny inward lean (leftward, toward triangle) */
+    24%  { opacity: 1; left: 47px; transform: translateY(-50%) scale(0.97); }
+    /* Push rightward: circle slides to far right of expanded pill, opening
+       the RIGHT side */
+    47%  { opacity: 1; left: 270px; transform: translateY(-50%) scale(1); }
+    /* Hold (47 → 56% / 1.7 → 2.0s): brand-mark money shot at the extremes */
+    56%  { opacity: 1; left: 270px; transform: translateY(-50%) scale(1); }
+    /* Traverse (56 → 84% / 2.0 → 3.0s): glide leftward to meet the triangle */
+    84%  { opacity: 1; left: 92px;  transform: translateY(-50%) scale(1); }
+    100% { opacity: 1; left: 92px;  transform: translateY(-50%) scale(1); }
+  }
+
+  /* Waveform: bars cascade in BEHIND the leftward-traveling circle.
+     Right-to-left stagger so the rightmost bar appears first (when the
+     circle leaves the right side) and the leftmost appears last (when the
+     circle is about to reach the triangle). */
+  .wave {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 64px;
+    left: 142px;
+    width: 170px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .wave .bar {
+    flex: 1;
+    background: white;
+    border-radius: 3px;
+    height: 12px;
+    opacity: 0;
+    animation:
+      barFade 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+      barPulse 1.6s ease-in-out infinite;
+  }
+  /* Stagger: circle is at relative left ~270 at t=2.0s, glides to ~92 at t=3.0s.
+     As it passes each bar's column, the bar lights up. Right-to-left order. */
+  .wave .bar:nth-child(5) { animation-delay: 2.05s, 2.65s; } /* rightmost first */
+  .wave .bar:nth-child(4) { animation-delay: 2.23s, 2.85s; }
+  .wave .bar:nth-child(3) { animation-delay: 2.41s, 3.05s; height: 28px; }
+  .wave .bar:nth-child(2) { animation-delay: 2.59s, 3.25s; }
+  .wave .bar:nth-child(1) { animation-delay: 2.77s, 3.45s; } /* leftmost last */
+
+  @keyframes barFade {
+    from { opacity: 0; transform: scaleY(0.3); }
+    to   { opacity: 1; transform: scaleY(1); }
+  }
+  @keyframes barPulse {
+    0%, 100% { transform: scaleY(0.6); }
+    50%      { transform: scaleY(1.4); }
+  }
+
+  /* Comet rim — flashes brightly on arrival, then settles into normal sweep */
+  .rim {
+    position: absolute;
+    inset: -3px;
+    border-radius: 51px;
+    padding: 3px;
+    background: conic-gradient(from 0deg,
+      transparent 0%,
+      transparent 50%,
+      rgba(255,255,255,0.6) 60%,
+      #7C4DFF 70%,
+      #4DA3FF 76%,
+      transparent 88%,
+      transparent 100%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    opacity: 0;
+    animation:
+      rimIgnite 0.9s ease-out forwards,
+      cometSpin 4.4s linear infinite;
+    animation-delay: 3.05s, 3.05s;
+    pointer-events: none;
+  }
+  @keyframes rimIgnite {
+    0%   { opacity: 0; filter: brightness(1); }
+    30%  { opacity: 1; filter: brightness(1.6); }
+    100% { opacity: 1; filter: brightness(1); }
+  }
+  @keyframes cometSpin {
+    to { transform: rotate(360deg); }
+  }
+
+  .phase-track {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: 17% 7% 24% 8% 30% 14%;
+    gap: 4px;
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    color: rgba(255,255,255,0.5);
+  }
+  .phase-track > div {
+    background: rgba(255,255,255,0.04);
+    border-left: 2px solid rgba(255,255,255,0.20);
+    padding: 6px 10px;
+    border-radius: 4px;
+  }
+  .phase-track > div strong { color: rgba(255,255,255,0.85); display: block; margin-bottom: 2px; }
+</style>
+
+<div class="stage" id="stage">
+  <div class="timing-readout">3.6s total · cinematic · v5</div>
+  <div class="pill">
+    <div class="rim"></div>
+    <div class="triangle"></div>
+    <div class="dot"></div>
+    <div class="wave">
+      <div class="bar"></div><div class="bar"></div>
+      <div class="bar"></div><div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+  </div>
+  <button class="replay-btn" onclick="replay()">↻ Replay</button>
+</div>
+
+<div class="phase-track">
+  <div><strong>0 → 0.6s</strong>Spawn: figures fade in + scale up, side-by-side at centre</div>
+  <div><strong>0.6 → 0.85s</strong>Anticipation</div>
+  <div><strong>0.85 → 1.7s</strong>Push: BOTH figures shove outward, opening the pill between them</div>
+  <div><strong>1.7 → 2.0s</strong>Hold (brand-mark money shot)</div>
+  <div><strong>2.0 → 3.0s</strong>Traverse: circle glides back leftward to meet triangle; bars cascade in behind</div>
+  <div><strong>3.05s+</strong>Ignite</div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3 style="margin-bottom: 8px;">Iterate?</h3>
+  <ul style="color: var(--text-secondary); padding-left: 20px; line-height: 1.8;">
+    <li><strong>Symmetric push</strong> — both figures now move equal-ish distances. Symmetric enough? Want the triangle's leftward push to be even more emphatic?</li>
+    <li><strong>Side-by-side spawn</strong> — figures spawn next to each other at centre (not overlapping). Want them to spawn ON TOP of each other (overlapping at the exact centre, then separate during the push)?</li>
+    <li><strong>Hold beat</strong> — currently 0.3s of brand-mark display at the extremes. Longer hold (more cinematic moment) or shorter (snappier flow into the traverse)?</li>
+    <li><strong>Traverse pace</strong> — currently 1.0s for the circle to glide back. Slower for more drama?</li>
+  </ul>
+</div>
+
+<script>
+  function replay() {
+    const stage = document.getElementById('stage');
+    const clone = stage.cloneNode(true);
+    stage.parentNode.replaceChild(clone, stage);
+    document.getElementById('stage').querySelector('.replay-btn').onclick = replay;
+  }
+
+  setInterval(replay, 5000);
+</script>
