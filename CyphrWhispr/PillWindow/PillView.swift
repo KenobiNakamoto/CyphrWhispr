@@ -1,0 +1,201 @@
+import SwiftUI
+
+/// High-level animation phase the pill is in. Maps loosely from `AppState` —
+/// the coordinator pushes state changes into PillViewModel.
+enum PillPhase: Equatable, Hashable, Sendable {
+    case idle
+    case armed
+    case listening
+    case processing
+}
+
+@MainActor
+final class PillViewModel: ObservableObject {
+    @Published var phase: PillPhase = .idle
+    @Published var level: Float = 0
+
+    var isRecording: Bool { phase == .armed || phase == .listening }
+}
+
+/// The black pill that floats at the bottom of the screen.
+///
+/// Design choices (per the latest user direction):
+///   • Body is **fully solid black** — no gradient, no inset glass effect.
+///   • All visual interest is in the **rim**: a static hairline + an animated
+///     conic-gradient "comet" that orbits the capsule + an outer blurred halo
+///     that gives the rim a high-quality glow without bleeding through the body.
+///   • Content (triangle, circle, waveform) lives in an HStack so SwiftUI
+///     handles **vertical centring** automatically rather than relying on
+///     hand-positioned y coordinates.
+struct PillView: View {
+    @ObservedObject var viewModel: PillViewModel
+    /// Owns the user's chosen accent — fed into the comet gradient below so
+    /// the rim halo retints the moment the user picks a new color in
+    /// Settings → About → Accent. Passed in explicitly (rather than via
+    /// EnvironmentObject) because the pill window is hosted outside the
+    /// Settings scene's environment.
+    @ObservedObject var prefs: PreferencesStore = .shared
+
+    // Visible pill geometry — half of the previous spec size.
+    private static let pillWidth: CGFloat = 170
+    private static let pillHeight: CGFloat = 48
+
+    var body: some View {
+        let shape = Capsule(style: .continuous)
+
+        return HStack(alignment: .center, spacing: 7) {
+            // Small invisible spacer so the triangle/circle group sits a bit
+            // further to the right of the pill's left edge — the user wanted
+            // breathing room on the left of the triangle without changing the
+            // overall pill padding.
+            Color.clear.frame(width: 8, height: 1)
+
+            DownTriangle()
+                .fill(Color.white)
+                .overlay(
+                    DownTriangle()
+                        .stroke(.white, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                )
+                .frame(width: 18, height: 16)
+
+            Circle()
+                .fill(Color.white)
+                .frame(width: 17, height: 17)
+                .scaleEffect(viewModel.phase == .listening
+                             ? 1.0 + CGFloat(min(viewModel.level, 1)) * 0.10
+                             : 1.0)
+                .animation(.easeOut(duration: 0.12), value: viewModel.level)
+
+            WaveformView(level: viewModel.level, phase: viewModel.phase)
+                .frame(maxWidth: .infinity)
+                // 40 instead of 30 so the centre bar can actually punch tall on
+                // loud speech without being clipped by the waveform frame.
+                .frame(height: 40)
+        }
+        .padding(.horizontal, 14)
+        .frame(width: Self.pillWidth, height: Self.pillHeight)
+        // Solid pure-black body (#000) — no gradients, no inset effects.
+        .background(shape.fill(Color.black))
+        // The rim does all the visual work, drawn on top of the body so colours
+        // sit on the edge.
+        .overlay(RimHighlights(phase: viewModel.phase,
+                               level: viewModel.level,
+                               accent: prefs.accent,
+                               accentSecondary: prefs.accentSecondary))
+        // Drop shadow for depth; intentionally neutral (no violet bleed).
+        .shadow(color: .black.opacity(0.50), radius: 16, x: 0, y: 8)
+        .shadow(color: .black.opacity(0.20), radius: 3, x: 0, y: 1)
+        // Generous outer padding so the drop shadow's soft tail (radius 16,
+        // y-offset 8) has room to fully fade to alpha 0 before reaching the
+        // panel edge. Bumped ~30% larger after the previous margin still let
+        // a faint rectangular silhouette show at the very edge of the soft
+        // shadow's fall-off.
+        .padding(EdgeInsets(top: 36, leading: 36, bottom: 48, trailing: 36))
+    }
+}
+
+// MARK: - Rim highlights
+
+/// All the rim treatment in one view, layered back-to-front:
+///   1. **Outer halo**: a blurred stroke of the moving conic gradient. Sits
+///      outside the capsule edge thanks to the blur — this is the "high-quality
+///      glow" without colouring the body.
+///   2. **Static rim**: subtle 1pt white border so the pill always has a
+///      defined edge, even between comet sweeps.
+///   3. **Comet highlight**: the bright conic-gradient sliver that orbits.
+private struct RimHighlights: View {
+    let phase: PillPhase
+    let level: Float
+    /// User-chosen accent — drives the bright core of the comet sweep.
+    let accent: Color
+    /// Cooler counterpart (hue-shifted accent) — drives the trailing fade so
+    /// the comet has a direction rather than a flat single-hue smear.
+    let accentSecondary: Color
+
+    /// One fixed loop duration regardless of phase. The earlier per-phase
+    /// speed change (4.8s armed → 3.2s listening) caused the comet's angle to
+    /// JUMP at the moment the user started speaking, because the angle is
+    /// `t / loopDuration` and we suddenly divided by a different number. With
+    /// a single constant the orbit stays perfectly continuous; we still react
+    /// to the phase via halo intensity + opacity instead.
+    private static let loopDuration: Double = 4.4
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: phase == .idle)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let angle = (t / Self.loopDuration * 360).truncatingRemainder(dividingBy: 360)
+            // Brighter halo when listening; subtle bump with audio level.
+            let intensity = (phase == .listening ? 0.95 : 0.65)
+                            + 0.30 * Double(min(max(level, 0), 1))
+
+            ZStack {
+                // 1. Outer halo (blurred stroke of the comet — bleeds beyond the rim)
+                Capsule(style: .continuous)
+                    .stroke(cometGradient(angle: angle), lineWidth: 4)
+                    .blur(radius: 5)
+                    .opacity(0.55 * intensity)
+
+                // 2. Static rim — 1pt subtle white edge always present while active
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+
+                // 3. Comet highlight — crisp neon sliver that orbits the rim
+                Capsule(style: .continuous)
+                    .strokeBorder(cometGradient(angle: angle), lineWidth: 1.4)
+            }
+            .opacity(phase == .idle ? 0 : 1)
+            .animation(.easeInOut(duration: 0.22), value: phase == .idle)
+        }
+    }
+
+    /// The conic gradient: a band of icy white + the user's accent + the
+    /// hue-shifted secondary, with very gentle alpha falloff on both ends so
+    /// the leading and trailing edges feather into transparency instead of
+    /// cutting off. Result: a soft "comet of light" rather than a hard moving
+    /// stripe — and one that retints whenever the user picks a new accent.
+    private func cometGradient(angle: Double) -> AngularGradient {
+        AngularGradient(
+            gradient: Gradient(stops: [
+                .init(color: .clear,                          location: 0.00),
+                .init(color: .clear,                          location: 0.30),
+                // Long, soft leading edge: clear → white over ~25% of perimeter
+                .init(color: .white.opacity(0.05),            location: 0.36),
+                .init(color: .white.opacity(0.18),            location: 0.44),
+                .init(color: .white.opacity(0.45),            location: 0.52),
+                .init(color: .white.opacity(0.78),            location: 0.58),
+                // Core of the comet: white → accent → secondary
+                .init(color: accent.opacity(0.85),            location: 0.66),
+                .init(color: accentSecondary.opacity(0.65),   location: 0.72),
+                // Long, soft trailing edge: secondary → clear over ~22%
+                .init(color: accentSecondary.opacity(0.30),   location: 0.78),
+                .init(color: accentSecondary.opacity(0.12),   location: 0.85),
+                .init(color: .clear,                          location: 0.92),
+                .init(color: .clear,                          location: 1.00),
+            ]),
+            center: .center,
+            angle: .degrees(angle)
+        )
+    }
+}
+
+// MARK: - Down triangle shape
+
+private struct DownTriangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
+#Preview {
+    let vm = PillViewModel()
+    vm.phase = .listening
+    vm.level = 0.55
+    return PillView(viewModel: vm)
+        .frame(width: 260, height: 120)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+}

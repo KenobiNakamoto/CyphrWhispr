@@ -1,0 +1,239 @@
+import AppKit
+import SwiftUI
+import Combine
+
+@MainActor
+final class PillWindowController {
+    /// Total panel size. Bigger than the visible pill (170×48) because PillView
+    /// pads itself so the drop shadow + rim halo can fully fade to alpha 0
+    /// before reaching the panel boundary. Bumped ~30% over the previous
+    /// 226×112 after a faint silhouette of the panel was still showing at the
+    /// shadow's fall-off.
+    /// Padding: 36 left/right/top, 48 bottom (extra for the y-offset shadow).
+    /// Panel = 170+72 × 48+84 = 242×132.
+    private static let pillSize = NSSize(width: 242, height: 132)
+    /// Distance of the *visible pill's* bottom edge from the bottom of the
+    /// screen. The panel itself sits lower because PillView adds 36pt of
+    /// bottom padding for shadow room; we subtract that when placing the
+    /// panel so the visible pill lands here regardless of padding changes.
+    private static let bottomMargin: CGFloat = 80
+    /// Bottom inset inside PillView (panel origin → visible pill bottom).
+    /// Must mirror the bottom padding in PillView.body.
+    private static let pillBottomInset: CGFloat = 48
+    /// Distance in points within which the pill softly snaps to a guide.
+    /// Larger value = "stickier" snap. 28 makes the centre-line feel magnetic.
+    private static let snapThreshold: CGFloat = 28
+    /// Persists the user's last manual position per-display.
+    private static let positionKey = "PillWindow.lastOriginByScreen"
+
+    private var panel: PillPanel?
+    private let viewModel = PillViewModel()
+
+    func show() {
+        let panel = panel ?? makePanel()
+        self.panel = panel
+        panel.setFrameOrigin(targetOrigin(for: panel))
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            ctx.allowsImplicitAnimation = true
+            panel.animator().alphaValue = 1
+        }
+        viewModel.phase = .armed
+    }
+
+    /// Spec calls for the pill to scale slightly down (1.0 → 0.97) and fade
+    /// out on completion. We do that here on the panel's contentView via a
+    /// CALayer transform in addition to fading alpha.
+    func hide() {
+        guard let panel else { return }
+        viewModel.phase = .idle
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.22
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            self?.panel?.orderOut(nil)
+            self?.viewModel.level = 0
+        })
+    }
+
+    func updateLevel(_ level: Float) {
+        viewModel.level = level
+        // Auto-promote .armed → .listening when audio rises above a tiny gate,
+        // and demote back when it falls. Threshold tuned by ear: 0.05 RMS is
+        // roughly "background room noise + speech onset," low enough to fire
+        // promptly but not so low that a fan triggers it.
+        if viewModel.phase == .armed && level > 0.05 {
+            viewModel.phase = .listening
+        } else if viewModel.phase == .listening && level < 0.02 {
+            viewModel.phase = .armed
+        }
+    }
+
+    /// Used by AppCoordinator to drive the pill into the .processing phase
+    /// (hotkey released, transcription finalising).
+    func setPhase(_ phase: PillPhase) {
+        viewModel.phase = phase
+    }
+
+    private func makePanel() -> PillPanel {
+        let frame = NSRect(origin: .zero, size: Self.pillSize)
+        let panel = PillPanel(contentRect: frame)
+        let host = NSHostingView(rootView: PillView(viewModel: viewModel))
+        host.frame = frame
+        host.autoresizingMask = [.width, .height]
+        // Make the SwiftUI host fully transparent — without this, NSHostingView
+        // on macOS 15+ paints a subtle rounded "liquid glass" backdrop behind
+        // the entire view's bounds, which read as a half-transparent box around
+        // our pill.
+        host.wantsLayer = true
+        host.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = makeContainer(host: host)
+        panel.delegate = panelDelegate
+        return panel
+    }
+
+    private func makeContainer(host: NSHostingView<PillView>) -> NSView {
+        let container = DraggablePillView(frame: NSRect(origin: .zero, size: Self.pillSize))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        // Real-time soft-snap: while dragging, route every candidate position
+        // through `snap()`. When the candidate is within `snapThreshold` of the
+        // centre line or the default bottom line, the panel locks onto the
+        // guide. This is what makes the snap feel magnetic instead of "I drop
+        // it and it teleports a little."
+        container.snapTransform = { [weak self] candidate in
+            guard let self, let panel = self.panel else { return candidate }
+            let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first!
+            return self.snap(origin: candidate, on: screen, panelSize: panel.frame.size)
+        }
+        container.onDragEnded = { [weak self] in self?.snapAndPersist() }
+        container.addSubview(host)
+        return container
+    }
+
+    private lazy var panelDelegate = PanelDelegate()
+
+    // MARK: - Positioning
+
+    private func targetOrigin(for panel: NSPanel) -> NSPoint {
+        let screen = focusedScreen() ?? NSScreen.main ?? NSScreen.screens.first!
+        if let saved = savedOrigin(for: screen) {
+            return clamped(saved, into: screen.visibleFrame, panelSize: panel.frame.size)
+        }
+        return defaultOrigin(on: screen, panelSize: panel.frame.size)
+    }
+
+    private func defaultOrigin(on screen: NSScreen, panelSize: NSSize) -> NSPoint {
+        let frame = screen.visibleFrame
+        return NSPoint(
+            x: frame.midX - panelSize.width / 2,
+            // Place the panel so the *visible pill* (inset 36pt above the
+            // panel's bottom edge for shadow room) sits at bottomMargin.
+            y: frame.minY + Self.bottomMargin - Self.pillBottomInset
+        )
+    }
+
+    private func snapAndPersist() {
+        guard let panel else { return }
+        let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first!
+        let snapped = snap(origin: panel.frame.origin, on: screen, panelSize: panel.frame.size)
+        if snapped != panel.frame.origin {
+            panel.animator().setFrameOrigin(snapped)
+        }
+        persistOrigin(snapped, for: screen)
+    }
+
+    /// Soft-snap to the vertical centre line and to the default bottom horizontal line.
+    private func snap(origin: NSPoint, on screen: NSScreen, panelSize: NSSize) -> NSPoint {
+        let frame = screen.visibleFrame
+        var x = origin.x
+        var y = origin.y
+
+        let centreX = frame.midX - panelSize.width / 2
+        if abs(x - centreX) < Self.snapThreshold {
+            x = centreX
+        }
+
+        let bottomY = frame.minY + Self.bottomMargin - Self.pillBottomInset
+        if abs(y - bottomY) < Self.snapThreshold {
+            y = bottomY
+        }
+
+        return clamped(NSPoint(x: x, y: y), into: frame, panelSize: panelSize)
+    }
+
+    private func clamped(_ point: NSPoint, into frame: NSRect, panelSize: NSSize) -> NSPoint {
+        let x = min(max(point.x, frame.minX), frame.maxX - panelSize.width)
+        let y = min(max(point.y, frame.minY), frame.maxY - panelSize.height)
+        return NSPoint(x: x, y: y)
+    }
+
+    private func focusedScreen() -> NSScreen? {
+        // Mouse position is a reliable proxy for "the display the user is currently working on".
+        // Querying AX for the focused window's frame is heavier and not needed here.
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+    }
+
+    // MARK: - Persistence
+
+    private func screenKey(_ screen: NSScreen) -> String {
+        let nsNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        return nsNumber.map { "\($0.uint32Value)" } ?? "default"
+    }
+
+    private func savedOrigin(for screen: NSScreen) -> NSPoint? {
+        let dict = UserDefaults.standard.dictionary(forKey: Self.positionKey) ?? [:]
+        guard let raw = dict[screenKey(screen)] as? [String: CGFloat],
+              let x = raw["x"], let y = raw["y"] else { return nil }
+        return NSPoint(x: x, y: y)
+    }
+
+    private func persistOrigin(_ point: NSPoint, for screen: NSScreen) {
+        var dict = UserDefaults.standard.dictionary(forKey: Self.positionKey) ?? [:]
+        dict[screenKey(screen)] = ["x": point.x, "y": point.y]
+        UserDefaults.standard.set(dict, forKey: Self.positionKey)
+    }
+}
+
+/// NSView subclass that lets the user drag the pill around like the macOS
+/// Spotlight bar. Optionally pipes each candidate origin through `snapTransform`
+/// for real-time soft-snapping during drag.
+private final class DraggablePillView: NSView {
+    /// Called once when the user releases the mouse (for persistence).
+    var onDragEnded: (() -> Void)?
+    /// Called for every drag tick; can return a snapped origin.
+    var snapTransform: ((NSPoint) -> NSPoint)?
+
+    private var dragOriginInWindow: NSPoint?
+
+    override var acceptsFirstResponder: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        let mouseInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        dragOriginInWindow = mouseInWindow
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window, let origin = dragOriginInWindow else { return }
+        let mouseScreen = NSEvent.mouseLocation
+        let candidate = NSPoint(
+            x: mouseScreen.x - origin.x,
+            y: mouseScreen.y - origin.y
+        )
+        let target = snapTransform?(candidate) ?? candidate
+        window.setFrameOrigin(target)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragOriginInWindow = nil
+        onDragEnded?()
+    }
+}
+
+private final class PanelDelegate: NSObject, NSWindowDelegate {}

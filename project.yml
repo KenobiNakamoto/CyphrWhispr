@@ -1,0 +1,97 @@
+name: CyphrWhispr
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  developmentLanguage: en
+  groupSortPosition: top
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    PRODUCT_BUNDLE_IDENTIFIER: com.cyphr.whispr
+    DEVELOPMENT_TEAM: ""
+    # Sign with a stable self-signed cert kept in the user's login Keychain so
+    # the binary's signature stays constant across rebuilds. macOS TCC tracks
+    # apps by signature, not bundle ID, so a stable signature means we grant
+    # Accessibility / Microphone / Apple Events ONCE and they stick.
+    # Create the cert once via Keychain Access → Certificate Assistant →
+    # "Create a Certificate…" with name "CyphrWhispr Dev", type Self Signed Root,
+    # certificate type Code Signing.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "CyphrWhispr Dev"
+    ENABLE_HARDENED_RUNTIME: YES
+    SWIFT_STRICT_CONCURRENCY: minimal
+
+packages:
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: "2.0.0"
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    from: "0.9.0"
+
+targets:
+  CyphrWhispr:
+    type: application
+    platform: macOS
+    sources:
+      - path: CyphrWhispr
+        excludes:
+          - "**/*.md"
+    resources:
+      - path: CyphrWhispr/Resources/Assets.xcassets
+    dependencies:
+      - package: KeyboardShortcuts
+      - package: WhisperKit
+        product: WhisperKit
+    info:
+      path: CyphrWhispr/Resources/Info.plist
+      properties:
+        CFBundleName: CyphrWhispr
+        CFBundleDisplayName: CyphrWhispr
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundlePackageType: APPL
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSUIElement: true
+        NSMicrophoneUsageDescription: "CyphrWhispr listens to your microphone only when you hold or toggle the dictation hotkey, transcribes locally on your Mac, and never sends audio anywhere."
+        NSHumanReadableCopyright: ""
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: CyphrWhispr/Resources/CyphrWhispr.entitlements
+        INFOPLIST_FILE: CyphrWhispr/Resources/Info.plist
+        ENABLE_PREVIEWS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+        COMBINE_HIDPI_IMAGES: YES
+    preBuildScripts:
+      - name: Strip iCloud xattrs from sources (prevents codesign failure)
+        # iCloud Drive's FileProvider attaches `com.apple.FinderInfo` and other
+        # xattrs to files inside ~/Documents. Xcode preserves those attributes
+        # through Copy Resources, and `codesign` then refuses to sign with
+        # "resource fork, Finder information, or similar detritus not allowed."
+        # Stripping the source tree before Xcode reads it sidesteps the entire
+        # chain. Cheap (xattr -cr is essentially free).
+        script: |
+          xattr -cr "${SRCROOT}/CyphrWhispr" 2>/dev/null || true
+        basedOnDependencyAnalysis: false
+    postCompileScripts:
+      - name: Strip xattrs from built bundle (belt-and-suspenders)
+        script: |
+          if [ -d "$CODESIGNING_FOLDER_PATH" ]; then
+            xattr -cr "$CODESIGNING_FOLDER_PATH" 2>/dev/null || true
+          fi
+        basedOnDependencyAnalysis: false
+
+  CyphrWhisprTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - CyphrWhisprTests
+    dependencies:
+      - target: CyphrWhispr

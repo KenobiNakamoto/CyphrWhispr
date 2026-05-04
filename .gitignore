@@ -1,0 +1,30 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad
+*.xcuserdata
+*.moved-aside
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Package.resolved
+Packages/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# CyphrWhispr local artefacts
+models/
+*.mlmodelc/
+*.gguf
+*.bin
+
+# AI assistant scratch + planning notes (local-only)
+.claude/
