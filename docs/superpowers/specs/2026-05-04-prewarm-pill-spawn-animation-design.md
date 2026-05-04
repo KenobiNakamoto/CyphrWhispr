@@ -8,7 +8,7 @@
 
 When the user fires the hotkey for the first time after an app launch, play a cinematic 3.6s "spawn" animation. This animation visually decouples the pill's appearance from Whisper engine readiness, makes the unavoidable pre-warm wait feel intentional, and ensures no spoken audio is lost during the warm-up window.
 
-After this first appearance, every subsequent hotkey press in the same session uses the existing instant pill appearance — the animation is the launch ritual, not a per-press effect.
+After this first appearance, every subsequent hotkey press in the same session uses the existing instant pill appearance — the animation is the launch ritual, not a per-press effect. The animation also replays once after the user switches the active Whisper model in Settings (since switching models triggers a fresh pre-warm of the new model and a brand-new "first press" feel).
 
 ## Why this matters
 
@@ -30,7 +30,7 @@ The spawn animation is the visible counterpart to the invisible pre-warm work ha
 
 - The SwiftUI implementation of the spawn animation in `PillView`
 - The state-machine integration — adding a `.spawning` phase before `.armed`
-- The "first-spawn-per-session" gating logic in `PillWindowController`
+- The "first-spawn-per-session OR after a model switch" gating logic in `PillWindowController`
 - Audio queueing during the animation (capture into buffer, defer transcription until animation completes AND engine is ready)
 - Behavior when pre-warm completes mid-animation (let it play out — see "Open questions")
 
@@ -41,7 +41,7 @@ The spawn animation is the visible counterpart to the invisible pre-warm work ha
 - Reordering launch sequence so global hotkey registration is the first thing that happens.
 - First-install Core ML compile progress UI (the 30–90s one-time onboarding screen). Separate brainstorm + spec.
 - Pre-warm failure handling (model corrupt, disk full, etc.). Separate spec.
-- Replaying the animation after a model switch in Settings. (See "Open questions".)
+- The full first-install / first-time-model-download experience. That gets its own (different) animation — a longer, looping compile-progress sequence that lives inside the onboarding window, not on the floating pill. Designed in a separate spec.
 
 ## Animation choreography
 
@@ -125,13 +125,27 @@ final class PillViewModel: ObservableObject {
 
 ### `PillWindowController` (existing file)
 
-Add a session-scoped flag:
+Add a "needs to play spawn next time" flag, set on launch and on model switch:
 
 ```swift
 @MainActor
 final class PillWindowController {
-    private var hasSpawnedThisSession = false
-    // …existing properties
+    /// True when the next show() should play the cinematic spawn instead of
+    /// the instant fade-in. Set on app launch and whenever the active model
+    /// changes (because a model switch kicks off a fresh pre-warm — same
+    /// "first press" feel as a cold launch).
+    private var spawnPending = true
+
+    init() {
+        // Replay the spawn after a model switch. The PreferencesStore
+        // publishes `activeModelID` changes; AppCoordinator already
+        // observes this to swap WhisperKit backends. We piggyback to
+        // reset spawnPending so the next pill appearance is cinematic.
+        NotificationCenter.default.addObserver(forName: .activeModelDidChange,
+                                               object: nil, queue: .main) { [weak self] _ in
+            self?.spawnPending = true
+        }
+    }
 
     func show() {
         let panel = panel ?? makePanel()
@@ -140,11 +154,11 @@ final class PillWindowController {
         panel.alphaValue = 0
         panel.orderFrontRegardless()
 
-        if !hasSpawnedThisSession {
-            // First press of the session — play the cinematic spawn.
-            // Pill becomes visible immediately (alpha → 1) and the SwiftUI
-            // body handles all the internal motion via PillPhase.
-            hasSpawnedThisSession = true
+        if spawnPending {
+            // Play the cinematic spawn. Pill becomes visible immediately
+            // (alpha → 1) and the SwiftUI body handles all the internal
+            // motion via PillPhase.spawning(progress:).
+            spawnPending = false
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.18
                 ctx.allowsImplicitAnimation = true
@@ -168,6 +182,8 @@ final class PillWindowController {
     }
 }
 ```
+
+(`Notification.Name.activeModelDidChange` is a small new notification posted by `PreferencesStore` when `activeModelID` changes. Trivial addition — alternative is wiring through Combine, but a one-line notification is lighter for this single observer.)
 
 ### `AppCoordinator` (existing file)
 
@@ -260,11 +276,11 @@ Performance budget:
 - Animation should hold 60fps on every supported hardware (M1 base is the floor).
 - Total CPU time during spawn: ≤ 5% of one core (the spawn runs while Whisper pre-warm is using GPU/Neural Engine, so we have CPU headroom).
 
-## Open questions for user review
+## Resolved decisions (formerly open questions)
 
-1. **Should the spawn replay after a model switch?** If the user changes the active Whisper model in Settings → Models, that triggers a fresh pre-warm of the new model. On the next hotkey press, do we replay the spawn animation? Default in this spec: **no** — first-of-session only. But there's a case for "yes" since the pre-warm window is real for the new model.
-2. **Should we always play the spawn — even when Whisper is already warm at press time?** Default in this spec: **yes** — consistency. But the alternative ("only spawn if pre-warm isn't done at press time") would skip the animation when not needed. Vote?
-3. **Audio queueing window** — the spec says we capture audio during spawn and drain when ready. Implicit cap: how much audio? The existing ring buffer is sized for ~30s of capture. The spawn is 3.6s, so we're well under. Just confirming this doesn't surprise anyone.
+1. **Replay after model switch?** **Yes.** Switching the active Whisper model in Settings posts an `activeModelDidChange` notification, `PillWindowController.spawnPending` flips back to `true`, and the next hotkey press plays the full cinematic spawn. Same "first press of a new chapter" feel.
+2. **Always play even when Whisper is already warm?** **Yes.** Consistency wins. The animation is short enough (3.6s) that even a fully-warm engine isn't bottlenecked by it — the buffered audio just drains immediately at the end. The animation is the "launch ritual," not a stall.
+3. **Audio queueing window.** Confirmed in scope. The existing ring buffer holds ~30s; spawn is 3.6s. No risk of overflow during normal use.
 
 ---
 
@@ -272,6 +288,7 @@ Performance budget:
 
 User signs off here before we move to writing-plans:
 
-- [ ] Choreography matches the v5 mockup (or note tweaks)
-- [ ] Trigger logic is right (first-of-session, not first-ever-install)
-- [ ] Resolved the open questions
+- [x] Choreography matches the v5 mockup
+- [x] Trigger logic: first press per session + after every model switch
+- [x] Always play, even when warm
+- [x] Audio queueing during spawn, drain when ready
