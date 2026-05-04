@@ -1,4 +1,5 @@
 import SwiftUI
+import QuartzCore
 
 /// High-level animation phase the pill is in. Maps loosely from `AppState` —
 /// the coordinator pushes state changes into PillViewModel.
@@ -35,10 +36,10 @@ final class PillViewModel: ObservableObject {
     func playSpawn(duration: TimeInterval = 3.6) async -> Bool {
         spawnTask?.cancel()
         let task = Task<Bool, Never> { @MainActor in
-            let start = Date()
+            let start = CACurrentMediaTime()
             phase = .spawning(progress: 0)
             while !Task.isCancelled {
-                let elapsed = Date().timeIntervalSince(start)
+                let elapsed = CACurrentMediaTime() - start
                 let t = min(1.0, elapsed / duration)
                 phase = .spawning(progress: t)
                 if t >= 1.0 { break }
