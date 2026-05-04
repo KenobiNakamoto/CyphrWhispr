@@ -4,6 +4,10 @@ import SwiftUI
 /// the coordinator pushes state changes into PillViewModel.
 enum PillPhase: Equatable, Hashable, Sendable {
     case idle
+    /// First-of-session (or post-model-switch) cinematic appearance.
+    /// `progress` is the normalised 0…1 timeline driven by `PillViewModel.playSpawn(duration:)`.
+    /// `PillView.body` reads `SpawnTimeline.state(at: progress)` to render the staged motion.
+    case spawning(progress: Double)
     case armed
     case listening
     case processing
