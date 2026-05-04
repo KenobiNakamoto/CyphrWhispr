@@ -27,6 +27,12 @@ final class CyphrWhisprTests: XCTestCase {
     func testActiveModelChange_postsNotification() async {
         let store = PreferencesStore.shared
         let initial = store.activeModelID
+        // Defer the restore so cleanup runs even if the expectation times out
+        // or a later assertion crashes — `PreferencesStore.shared` is a
+        // process-wide singleton backed by UserDefaults, so a leaked value
+        // would persist across test runs and pollute the developer's prefs.
+        defer { store.activeModelID = initial }
+
         let other = (initial == "openai_whisper-small.en")
             ? "openai_whisper-tiny.en"
             : "openai_whisper-small.en"
@@ -37,8 +43,5 @@ final class CyphrWhisprTests: XCTestCase {
 
         store.activeModelID = other
         await fulfillment(of: [exp], timeout: 1.0)
-
-        // Restore so we don't pollute test ordering.
-        store.activeModelID = initial
     }
 }
