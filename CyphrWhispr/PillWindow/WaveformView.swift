@@ -66,7 +66,12 @@ struct WaveformView: View {
     private func rawHeight(at index: Int, time: TimeInterval, resting: CGFloat) -> CGFloat {
 
         switch phase {
-        case .idle:
+        case .idle, .spawning:
+            // During .spawning, PillView renders its own staged bar opacities
+            // via SpawnTimeline — WaveformView shouldn't be drawing at all.
+            // We return the resting height as a defensive default; if the
+            // view IS rendered in this phase (it shouldn't be), bars stay
+            // at neutral instead of animating unpredictably.
             return resting
 
         case .armed:
