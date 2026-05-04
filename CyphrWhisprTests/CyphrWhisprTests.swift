@@ -75,4 +75,55 @@ final class CyphrWhisprTests: XCTestCase {
             XCTFail("after cancellation, phase should still be .spawning, got \(vm.phase)")
         }
     }
+
+    @MainActor
+    func testPillController_spawnsOnFirstShow_thenInstantOnSecond() async {
+        let controller = PillWindowController()
+
+        // First show — should set phase to .spawning(progress: 0).
+        controller.show()
+        try? await Task.sleep(nanoseconds: 50_000_000)  // give playSpawn one tick
+
+        if case .spawning = controller.viewModelForTesting.phase {
+            // pass
+        } else {
+            XCTFail("first show() must trigger .spawning phase, got \(controller.viewModelForTesting.phase)")
+        }
+
+        // Cancel + hide
+        controller.hide()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // Second show — should be instant .armed.
+        controller.show()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(controller.viewModelForTesting.phase, .armed,
+                       "second show() in same session must skip the spawn")
+
+        controller.hide()
+    }
+
+    @MainActor
+    func testPillController_replaysSpawnAfterModelChange() async {
+        let controller = PillWindowController()
+
+        controller.show()  // burns the first spawn
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        controller.hide()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // Simulate the user changing the active model in Settings.
+        NotificationCenter.default.post(name: .activeModelDidChange, object: nil)
+        try? await Task.sleep(nanoseconds: 50_000_000)  // let observer fire
+
+        controller.show()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        if case .spawning = controller.viewModelForTesting.phase {
+            // pass — spawnPending was reset by the notification
+        } else {
+            XCTFail("show() after activeModelDidChange must replay spawn, got \(controller.viewModelForTesting.phase)")
+        }
+        controller.hide()
+    }
 }
