@@ -4,6 +4,16 @@ import Combine
 
 @MainActor
 final class PillWindowController {
+    /// True when the next `show()` should play the cinematic spawn instead of
+    /// the instant fade-in. Set to `true` on init (so the first press of every
+    /// session is cinematic) and again whenever the user picks a different
+    /// Whisper model in Settings (because that triggers a fresh pre-warm and
+    /// the same "first press" feel applies). Set to `false` after each spawn.
+    private var spawnPending = true
+
+    /// Held strongly so the observer survives for the controller's lifetime.
+    private var modelChangeObserver: NSObjectProtocol?
+
     /// Total panel size. Bigger than the visible pill (170×48) because PillView
     /// pads itself so the drop shadow + rim halo can fully fade to alpha 0
     /// before reaching the panel boundary. Bumped ~30% over the previous
@@ -29,6 +39,35 @@ final class PillWindowController {
     private var panel: PillPanel?
     private let viewModel = PillViewModel()
 
+    init() {
+        // Re-arm the spawn after every model switch. PreferencesStore posts
+        // .activeModelDidChange in its activeModelID didSet (after dedup).
+        modelChangeObserver = NotificationCenter.default.addObserver(
+            forName: .activeModelDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.spawnPending = true
+        }
+    }
+
+    deinit {
+        if let observer = modelChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// Fired when the cinematic spawn animation finishes (i.e. when the pill
+    /// has transitioned from `.spawning(...)` to `.armed`). AppCoordinator
+    /// registers a closure here to drain its audio buffer + start streaming.
+    /// On a non-spawn `show()` (subsequent presses in the same session), this
+    /// fires synchronously inside `show()` so the same code path always works.
+    var onSpawnComplete: (() -> Void)?
+
+    /// **For tests only.** Production code should never read the view model
+    /// directly — go through `setPhase`, `updateLevel`, etc.
+    var viewModelForTesting: PillViewModel { viewModel }
+
     func show() {
         let panel = panel ?? makePanel()
         self.panel = panel
@@ -40,7 +79,20 @@ final class PillWindowController {
             ctx.allowsImplicitAnimation = true
             panel.animator().alphaValue = 1
         }
-        viewModel.phase = .armed
+
+        if spawnPending {
+            spawnPending = false
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let completed = await self.viewModel.playSpawn()
+                if completed {
+                    self.onSpawnComplete?()
+                }
+            }
+        } else {
+            viewModel.phase = .armed
+            onSpawnComplete?()
+        }
     }
 
     /// Spec calls for the pill to scale slightly down (1.0 → 0.97) and fade
@@ -48,6 +100,7 @@ final class PillWindowController {
     /// CALayer transform in addition to fading alpha.
     func hide() {
         guard let panel else { return }
+        viewModel.cancelSpawn()  // safe no-op if no spawn in flight
         viewModel.phase = .idle
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.22
