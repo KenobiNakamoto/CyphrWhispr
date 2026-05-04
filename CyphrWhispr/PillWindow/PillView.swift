@@ -131,7 +131,9 @@ struct PillView: View {
         .padding(.horizontal, 14)
         .frame(width: Self.pillWidth, height: Self.pillHeight)
         .background(shape.fill(Color.black))
-        .overlay(RimHighlights(phase: viewModel.phase,
+        .overlay(RimHighlights(visible: viewModel.phase != .idle,
+                               animating: viewModel.phase != .idle,
+                               intensity: (viewModel.phase == .listening ? 0.95 : 0.65),
                                level: viewModel.level,
                                accent: prefs.accent,
                                accentSecondary: prefs.accentSecondary))
@@ -149,10 +151,15 @@ struct PillView: View {
         let shape = Capsule(style: .continuous)
 
         ZStack(alignment: .leading) {
-            // Capsule body — pure black, animated width.
+            // Capsule body — pure black, animated width. Shadows attached HERE
+            // (not on the outer ZStack frame) so they track the visible capsule
+            // size during seed/anticipation phases instead of leaking ahead at
+            // the full 170pt outer frame.
             shape
                 .fill(Color.black)
                 .frame(width: s.pillWidth, height: Self.pillHeight)
+                .shadow(color: .black.opacity(0.50 * s.figureOpacity), radius: 16, x: 0, y: 8)
+                .shadow(color: .black.opacity(0.20 * s.figureOpacity), radius: 3, x: 0, y: 1)
 
             // Triangle — absolute positioning by SpawnTimeline.triangleX
             DownTriangle()
@@ -177,27 +184,28 @@ struct PillView: View {
             // by spreading evenly across the waveform area
             // (left = 70 → right = 156, production scale).
             ForEach(0..<5, id: \.self) { i in
-                let column: CGFloat = 70 + CGFloat(i) * (86 / 4)  // 70, 91.5, 113, 134.5, 156
-                let barHeight: CGFloat = (i == 2) ? 14 : 6  // centre bar taller
+                let barHeight: CGFloat = (i == 2)
+                    ? SpawnTimeline.barCentreHeight
+                    : SpawnTimeline.barShortHeight
                 Rectangle()
                     .fill(Color.white)
-                    .frame(width: 2, height: barHeight)
+                    .frame(width: SpawnTimeline.barWidth, height: barHeight)
                     .opacity(s.barOpacities[i])
-                    .offset(x: column,
+                    .offset(x: SpawnTimeline.barColumns[i],
                             y: (Self.pillHeight - barHeight) / 2)
             }
         }
         .frame(width: Self.pillWidth, height: Self.pillHeight, alignment: .leading)
         // Rim halo only after ignite — opacity ramps 0 → 1 in the ignite phase
         .overlay(
-            RimHighlights(phase: .listening,  // pretend listening so the comet runs
+            RimHighlights(visible: true,
+                          animating: true,
+                          intensity: 0.85,
                           level: 0.0,
                           accent: prefs.accent,
                           accentSecondary: prefs.accentSecondary)
                 .opacity(s.rimOpacity)
         )
-        .shadow(color: .black.opacity(0.50 * s.figureOpacity), radius: 16, x: 0, y: 8)
-        .shadow(color: .black.opacity(0.20 * s.figureOpacity), radius: 3, x: 0, y: 1)
     }
 }
 
@@ -211,36 +219,45 @@ struct PillView: View {
 ///      defined edge, even between comet sweeps.
 ///   3. **Comet highlight**: the bright conic-gradient sliver that orbits.
 private struct RimHighlights: View {
-    let phase: PillPhase
+    /// Whether the rim is visible at all. When false, the whole component
+    /// renders nothing — used for the `.idle` state and during the early
+    /// (pre-ignite) phases of the spawn animation. Visibility transitions
+    /// fade gently via the .opacity animation.
+    let visible: Bool
+    /// Whether the comet animation should keep ticking. Pause it during
+    /// `.idle` to save CPU; keep it running during all active phases AND
+    /// during the spawn animation (the comet should already be orbiting
+    /// when the rim fades in at ignite).
+    let animating: Bool
+    /// Brightness multiplier for the halo glow. ~0.65 for armed/processing,
+    /// 0.95 for listening, 0.85 for the spawn ignite to feel "alive."
+    let intensity: Double
+    /// Audio level — adds a subtle bump to the halo when speaking.
     let level: Float
     /// User-chosen accent — drives the bright core of the comet sweep.
     let accent: Color
-    /// Cooler counterpart (hue-shifted accent) — drives the trailing fade so
-    /// the comet has a direction rather than a flat single-hue smear.
+    /// Cooler counterpart (hue-shifted accent) — drives the trailing fade.
     let accentSecondary: Color
 
     /// One fixed loop duration regardless of phase. The earlier per-phase
-    /// speed change (4.8s armed → 3.2s listening) caused the comet's angle to
-    /// JUMP at the moment the user started speaking, because the angle is
-    /// `t / loopDuration` and we suddenly divided by a different number. With
-    /// a single constant the orbit stays perfectly continuous; we still react
-    /// to the phase via halo intensity + opacity instead.
+    /// speed change caused the comet's angle to JUMP at the moment phase
+    /// changed because the angle is `t / loopDuration` and we suddenly
+    /// divided by a different number. Single constant keeps the orbit
+    /// continuous; we react to phase via `intensity` and `visible` instead.
     private static let loopDuration: Double = 4.4
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: phase == .idle)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !animating)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let angle = (t / Self.loopDuration * 360).truncatingRemainder(dividingBy: 360)
-            // Brighter halo when listening; subtle bump with audio level.
-            let intensity = (phase == .listening ? 0.95 : 0.65)
-                            + 0.30 * Double(min(max(level, 0), 1))
+            let levelBump = 0.30 * Double(min(max(level, 0), 1))
 
             ZStack {
                 // 1. Outer halo (blurred stroke of the comet — bleeds beyond the rim)
                 Capsule(style: .continuous)
                     .stroke(cometGradient(angle: angle), lineWidth: 4)
                     .blur(radius: 5)
-                    .opacity(0.55 * intensity)
+                    .opacity(0.55 * (intensity + levelBump))
 
                 // 2. Static rim — 1pt subtle white edge always present while active
                 Capsule(style: .continuous)
@@ -250,8 +267,8 @@ private struct RimHighlights: View {
                 Capsule(style: .continuous)
                     .strokeBorder(cometGradient(angle: angle), lineWidth: 1.4)
             }
-            .opacity(phase == .idle ? 0 : 1)
-            .animation(.easeInOut(duration: 0.22), value: phase == .idle)
+            .opacity(visible ? 1 : 0)
+            .animation(.easeInOut(duration: 0.22), value: visible)
         }
     }
 

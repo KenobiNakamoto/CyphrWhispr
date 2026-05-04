@@ -65,6 +65,21 @@ enum SpawnTimeline {
     private static let dotPushHoldX:      CGFloat = 135
     private static let dotTraverseEndX:   CGFloat = 46
 
+    // MARK: - Bar geometry (public — read by PillView's spawnBody)
+
+    /// Five evenly-spaced waveform bar columns, in points relative to the
+    /// pill's left edge. Production scale (170pt-wide pill).
+    static let barColumns: [CGFloat] = [70, 92, 113, 135, 156]
+
+    /// Width of each bar (pt).
+    static let barWidth: CGFloat = 2
+
+    /// Height of the centre (3rd) bar at rest. Tallest of the five.
+    static let barCentreHeight: CGFloat = 14
+
+    /// Height of the four non-centre bars at rest.
+    static let barShortHeight: CGFloat = 6
+
     /// Each bar's reveal window. The traverse phase spans 0.556 → 0.833
     /// (Δ ≈ 0.277). Bars cascade right-to-left with ~0.05 stagger each;
     /// each bar's individual fade takes ~0.05 of normalised time.
