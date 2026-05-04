@@ -22,4 +22,23 @@ final class CyphrWhisprTests: XCTestCase {
         XCTAssertEqual(read.count, 4)
         XCTAssertEqual(read.last, 6)
     }
+
+    @MainActor
+    func testActiveModelChange_postsNotification() async {
+        let store = PreferencesStore.shared
+        let initial = store.activeModelID
+        let other = (initial == "openai_whisper-small.en")
+            ? "openai_whisper-tiny.en"
+            : "openai_whisper-small.en"
+
+        let exp = expectation(forNotification: .activeModelDidChange,
+                              object: store,
+                              handler: nil)
+
+        store.activeModelID = other
+        await fulfillment(of: [exp], timeout: 1.0)
+
+        // Restore so we don't pollute test ordering.
+        store.activeModelID = initial
+    }
 }

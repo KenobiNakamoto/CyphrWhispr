@@ -31,6 +31,10 @@ final class PreferencesStore: ObservableObject {
         didSet {
             guard activeModelID != oldValue else { return }
             UserDefaults.standard.set(activeModelID, forKey: Key.activeModelID)
+            // Broadcast so cross-cutting listeners (PillWindowController
+            // for the spawn animation reset) can react without a tight
+            // Combine binding back into the prefs store.
+            NotificationCenter.default.post(name: .activeModelDidChange, object: self)
         }
     }
 
@@ -141,4 +145,13 @@ extension PreferencesStore {
             endPoint: .bottomTrailing
         )
     }
+}
+
+extension Notification.Name {
+    /// Posted by `PreferencesStore` whenever the user picks a different
+    /// Whisper model. Listeners (e.g. `PillWindowController`) use this to
+    /// reset session-scoped state that should re-trigger after a model
+    /// switch — like replaying the cinematic spawn animation on the next
+    /// hotkey press.
+    static let activeModelDidChange = Notification.Name("CyphrWhispr.activeModelDidChange")
 }
