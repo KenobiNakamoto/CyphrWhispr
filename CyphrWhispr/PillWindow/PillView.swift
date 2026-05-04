@@ -19,6 +19,49 @@ final class PillViewModel: ObservableObject {
     @Published var level: Float = 0
 
     var isRecording: Bool { phase == .armed || phase == .listening }
+
+    /// Drives the spawn animation from `progress = 0` to `progress = 1` over
+    /// `duration` seconds, then sets `phase = .armed`. Polls at ~60Hz, which
+    /// is plenty for SwiftUI's diff-based body re-evaluation.
+    ///
+    /// Calling this while another spawn is in flight cancels the previous
+    /// one (last-write-wins). Returns `true` if the animation ran to
+    /// completion, `false` if it was cancelled. The boolean lets the
+    /// caller distinguish "phase == .armed because spawn finished" from
+    /// "phase happened to be .armed because something else moved it" — the
+    /// race exists because audio-level updates can promote `.armed` to
+    /// `.listening` the instant the spawn ends.
+    @discardableResult
+    func playSpawn(duration: TimeInterval = 3.6) async -> Bool {
+        spawnTask?.cancel()
+        let task = Task<Bool, Never> { @MainActor in
+            let start = Date()
+            phase = .spawning(progress: 0)
+            while !Task.isCancelled {
+                let elapsed = Date().timeIntervalSince(start)
+                let t = min(1.0, elapsed / duration)
+                phase = .spawning(progress: t)
+                if t >= 1.0 { break }
+                try? await Task.sleep(nanoseconds: 16_000_000)  // ~60fps
+            }
+            if Task.isCancelled { return false }
+            phase = .armed
+            return true
+        }
+        spawnTask = task
+        return await task.value
+    }
+
+    /// Aborts an in-flight spawn animation. Phase stays at whatever
+    /// `.spawning(progress:)` value the timeline last published — the
+    /// caller is responsible for the next phase transition (typically
+    /// `.idle` via `PillWindowController.hide()`).
+    func cancelSpawn() {
+        spawnTask?.cancel()
+        spawnTask = nil
+    }
+
+    private var spawnTask: Task<Bool, Never>?
 }
 
 /// The black pill that floats at the bottom of the screen.

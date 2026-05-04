@@ -44,4 +44,35 @@ final class CyphrWhisprTests: XCTestCase {
         store.activeModelID = other
         await fulfillment(of: [exp], timeout: 1.0)
     }
+
+    @MainActor
+    func testPlaySpawn_progressesFromZeroToArmed() async {
+        let vm = PillViewModel()
+        XCTAssertEqual(vm.phase, .idle)
+
+        // Use a short duration so the test runs quickly. The implementation
+        // is duration-agnostic — same logic, faster wall-clock.
+        await vm.playSpawn(duration: 0.20)
+
+        XCTAssertEqual(vm.phase, .armed,
+                       "spawn should complete by setting phase to .armed")
+    }
+
+    @MainActor
+    func testCancelSpawn_stopsTimeline_keepsLastPhase() async {
+        let vm = PillViewModel()
+        let task = Task { await vm.playSpawn(duration: 1.0) }
+
+        // Let the spawn run for a slice, then cancel.
+        try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+        vm.cancelSpawn()
+        await task.value
+
+        // Phase should still be .spawning(...) — cancel does NOT advance to .armed.
+        if case .spawning = vm.phase {
+            // pass
+        } else {
+            XCTFail("after cancellation, phase should still be .spawning, got \(vm.phase)")
+        }
+    }
 }
