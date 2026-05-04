@@ -174,14 +174,9 @@ enum SpawnTimeline {
     }
 
     private static func rimOpacity(at t: Double) -> Double {
-        // The rim ramps in across the ignite phase. We bias the curve so the
-        // very first frame at `pIgniteStart` already shows a sliver of opacity
-        // (the phase has *begun*, not "is about to begin"). The bias is small
-        // enough that the curve still feels like it starts from zero.
         if t < pIgniteStart { return 0 }
         let local = (t - pIgniteStart) / (1 - pIgniteStart)
-        let biased = min(1, local + 0.05)
-        return easeOut(biased)
+        return easeOut(min(1, local))
     }
 
     // MARK: - Easings + utilities
