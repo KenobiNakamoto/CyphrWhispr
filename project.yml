@@ -95,3 +95,9 @@ targets:
       - CyphrWhisprTests
     dependencies:
       - target: CyphrWhispr
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.cyphr.whispr.tests
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/CyphrWhispr.app/Contents/MacOS/CyphrWhispr"
