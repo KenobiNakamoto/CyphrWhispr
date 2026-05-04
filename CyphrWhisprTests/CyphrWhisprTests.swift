@@ -113,7 +113,10 @@ final class CyphrWhisprTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 100_000_000)
 
         // Simulate the user changing the active model in Settings.
-        NotificationCenter.default.post(name: .activeModelDidChange, object: nil)
+        // Must post with PreferencesStore.shared as the object since the
+        // controller scopes its observer to that specific sender.
+        NotificationCenter.default.post(name: .activeModelDidChange,
+                                        object: PreferencesStore.shared)
         try? await Task.sleep(nanoseconds: 50_000_000)  // let observer fire
 
         controller.show()
@@ -124,6 +127,31 @@ final class CyphrWhisprTests: XCTestCase {
         } else {
             XCTFail("show() after activeModelDidChange must replay spawn, got \(controller.viewModelForTesting.phase)")
         }
+        controller.hide()
+    }
+
+    @MainActor
+    func testPillController_firesOnSpawnCompleteOnInstantPath() async {
+        let controller = PillWindowController()
+
+        // Burn the first show (cinematic spawn) and hide so the next show()
+        // takes the instant path.
+        controller.show()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        controller.hide()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // Wire the callback now (after the cinematic spawn has finished or
+        // been cancelled, so we don't catch its callback by accident).
+        var fired = false
+        controller.onSpawnComplete = { fired = true }
+
+        // Instant-path show should fire onSpawnComplete async (matching
+        // the cinematic path's async dispatch).
+        controller.show()
+        try? await Task.sleep(nanoseconds: 100_000_000)  // give the Task a tick
+
+        XCTAssertTrue(fired, "instant path must fire onSpawnComplete")
         controller.hide()
     }
 }

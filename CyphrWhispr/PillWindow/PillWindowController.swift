@@ -42,9 +42,12 @@ final class PillWindowController {
     init() {
         // Re-arm the spawn after every model switch. PreferencesStore posts
         // .activeModelDidChange in its activeModelID didSet (after dedup).
+        // Scope to PreferencesStore.shared so we don't re-arm spawn from
+        // any unrelated notification post (defensive against future code
+        // paths that might post .activeModelDidChange for other reasons).
         modelChangeObserver = NotificationCenter.default.addObserver(
             forName: .activeModelDidChange,
-            object: nil,
+            object: PreferencesStore.shared,
             queue: .main
         ) { [weak self] _ in
             self?.spawnPending = true
@@ -69,6 +72,12 @@ final class PillWindowController {
     var viewModelForTesting: PillViewModel { viewModel }
 
     func show() {
+        // Defensive: if a previous spawn is still running (rare — show()
+        // is normally paired with hide() by the hotkey lifecycle, but
+        // double-press or other races can hit this), cancel it cleanly
+        // so it doesn't overwrite the .armed phase below.
+        viewModel.cancelSpawn()
+
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.setFrameOrigin(targetOrigin(for: panel))
@@ -91,7 +100,11 @@ final class PillWindowController {
             }
         } else {
             viewModel.phase = .armed
-            onSpawnComplete?()
+            // Dispatch async (matching the cinematic path) so AppCoordinator's
+            // callback can't re-enter PillWindowController synchronously inside
+            // show(). Both paths now have the same re-entrancy behaviour.
+            let cb = onSpawnComplete
+            Task { @MainActor in cb?() }
         }
     }
 
