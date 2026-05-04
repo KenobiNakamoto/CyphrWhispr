@@ -85,9 +85,19 @@ final class SpawnTimelineTests: XCTestCase {
     // MARK: - Ignite (0.847 → 1.0)
 
     func test_atIgniteStart_rimBeginsToFadeIn() {
-        let s = SpawnTimeline.state(at: 0.847)
+        // Sample 3ms past the exact phase boundary so we observe a visible
+        // fade-in (the rim curve correctly returns 0 AT the boundary itself).
+        let s = SpawnTimeline.state(at: 0.85)
         XCTAssertGreaterThan(s.rimOpacity, 0)
         XCTAssertLessThan(s.rimOpacity, 0.5)
+    }
+
+    func test_atIgniteStartExactly_rimIsZero() {
+        // At the exact phase boundary, rim has not yet started fading in.
+        // The first observable opacity comes a few normalised ticks later
+        // (covered by test_atIgniteStart_rimBeginsToFadeIn).
+        let s = SpawnTimeline.state(at: 0.847)
+        XCTAssertEqual(s.rimOpacity, 0, accuracy: 0.0001)
     }
 
     func test_atTimeOne_rimFullyVisible_allBarsVisible() {
