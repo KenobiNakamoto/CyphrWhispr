@@ -72,9 +72,10 @@ final class PillViewModel: ObservableObject {
 ///   • All visual interest is in the **rim**: a static hairline + an animated
 ///     conic-gradient "comet" that orbits the capsule + an outer blurred halo
 ///     that gives the rim a high-quality glow without bleeding through the body.
-///   • Content (triangle, circle, waveform) lives in an HStack so SwiftUI
-///     handles **vertical centring** automatically rather than relying on
-///     hand-positioned y coordinates.
+///   • Content (triangle, circle, waveform) is positioned absolutely inside
+///     a leading-anchored ZStack so bar X positions are pixel-deterministic
+///     and align with the design spec's geometry. Vertical centring is done
+///     per-element via `(pillHeight - elementHeight) / 2`.
 struct PillView: View {
     @ObservedObject var viewModel: PillViewModel
     /// Owns the user's chosen accent — fed into the comet gradient below so
