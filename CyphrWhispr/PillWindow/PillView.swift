@@ -88,6 +88,11 @@ struct PillView: View {
     private static let pillWidth: CGFloat = 170
     private static let pillHeight: CGFloat = 48
 
+    // Idle-pill bar group geometry (from the high-fidelity mockup).
+    // First bar's left edge sits at x=90; 7 bars × 3pt + 6 gaps × 4pt = 45pt total.
+    private static let waveformX: CGFloat = 90
+    private static let waveformWidth: CGFloat = 45  // 7×3 + 6×4
+
     var body: some View {
         Group {
             if case .spawning(let progress) = viewModel.phase {
@@ -105,9 +110,15 @@ struct PillView: View {
     @ViewBuilder
     private var normalBody: some View {
         let shape = Capsule(style: .continuous)
-        HStack(alignment: .center, spacing: 7) {
-            Color.clear.frame(width: 8, height: 1)
+        ZStack(alignment: .leading) {
+            // Capsule body — pure black with the existing two-shadow stack.
+            shape
+                .fill(Color.black)
+                .frame(width: Self.pillWidth, height: Self.pillHeight)
+                .shadow(color: .black.opacity(0.50), radius: 16, x: 0, y: 8)
+                .shadow(color: .black.opacity(0.20), radius: 3, x: 0, y: 1)
 
+            // Triangle — left edge at x=22, vertically centred.
             DownTriangle()
                 .fill(Color.white)
                 .overlay(
@@ -115,7 +126,10 @@ struct PillView: View {
                         .stroke(.white, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 )
                 .frame(width: 18, height: 16)
+                .offset(x: 22, y: (Self.pillHeight - 16) / 2)
 
+            // Circle — left edge at x=47, vertically centred. Preserves the
+            // .listening level-bump scale effect from the previous layout.
             Circle()
                 .fill(Color.white)
                 .frame(width: 17, height: 17)
@@ -123,22 +137,23 @@ struct PillView: View {
                              ? 1.0 + CGFloat(min(viewModel.level, 1)) * 0.10
                              : 1.0)
                 .animation(.easeOut(duration: 0.12), value: viewModel.level)
+                .offset(x: 47, y: (Self.pillHeight - 17) / 2)
 
+            // Waveform — first bar's left edge at x=90, group is exactly 45pt
+            // wide (7 bars × 3pt + 6 gaps × 4pt). Pinning the frame to that
+            // width makes the bar X positions pixel-deterministic instead of
+            // depending on HStack flow.
             WaveformView(level: viewModel.level, phase: viewModel.phase)
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
+                .frame(width: Self.waveformWidth, height: Self.pillHeight)
+                .offset(x: Self.waveformX, y: 0)
         }
-        .padding(.horizontal, 14)
-        .frame(width: Self.pillWidth, height: Self.pillHeight)
-        .background(shape.fill(Color.black))
+        .frame(width: Self.pillWidth, height: Self.pillHeight, alignment: .leading)
         .overlay(RimHighlights(visible: viewModel.phase != .idle,
                                animating: viewModel.phase != .idle,
                                intensity: (viewModel.phase == .listening ? 0.95 : 0.65),
                                level: viewModel.level,
                                accent: prefs.accent,
                                accentSecondary: prefs.accentSecondary))
-        .shadow(color: .black.opacity(0.50), radius: 16, x: 0, y: 8)
-        .shadow(color: .black.opacity(0.20), radius: 3, x: 0, y: 1)
     }
 
     /// Renders the pill mid-spawn: figures positioned by absolute offsets
