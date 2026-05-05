@@ -154,4 +154,69 @@ final class CyphrWhisprTests: XCTestCase {
         XCTAssertTrue(fired, "instant path must fire onSpawnComplete")
         controller.hide()
     }
+
+    @MainActor
+    func testPlayInstallSpawn_progressesFromZeroToCompiling() async {
+        let vm = PillViewModel()
+        let didFinish = await vm.playInstallSpawn(duration: 0.05)
+        XCTAssertTrue(didFinish)
+        if case .installCompiling(let p) = vm.phase {
+            XCTAssertEqual(p, 0, accuracy: 0.001)
+        } else {
+            XCTFail("Expected .installCompiling(0), got \(vm.phase)")
+        }
+    }
+
+    @MainActor
+    func testSetInstallProgress_updatesWhenInCompilingPhase() {
+        let vm = PillViewModel()
+        vm.phase = .installCompiling(progress: 0)
+        vm.setInstallProgress(0.42)
+        if case .installCompiling(let p) = vm.phase {
+            XCTAssertEqual(p, 0.42, accuracy: 0.001)
+        } else {
+            XCTFail("Expected .installCompiling(0.42), got \(vm.phase)")
+        }
+    }
+
+    @MainActor
+    func testSetInstallProgress_clampsToZeroOne() {
+        let vm = PillViewModel()
+        vm.phase = .installCompiling(progress: 0)
+        vm.setInstallProgress(1.5)
+        if case .installCompiling(let p) = vm.phase {
+            XCTAssertEqual(p, 1.0, accuracy: 0.001)
+        } else { XCTFail() }
+        vm.setInstallProgress(-0.5)
+        if case .installCompiling(let p) = vm.phase {
+            XCTAssertEqual(p, 0.0, accuracy: 0.001)
+        } else { XCTFail() }
+    }
+
+    @MainActor
+    func testSetInstallProgress_isNoOpOutsideCompilingPhase() {
+        let vm = PillViewModel()
+        vm.phase = .idle
+        vm.setInstallProgress(0.5)
+        XCTAssertEqual(vm.phase, .idle)
+    }
+
+    @MainActor
+    func testPlayInstallOutro_progressesToArmed() async {
+        let vm = PillViewModel()
+        vm.phase = .installCompiling(progress: 1.0)
+        let didFinish = await vm.playInstallOutro(duration: 0.05)
+        XCTAssertTrue(didFinish)
+        XCTAssertEqual(vm.phase, .armed)
+    }
+
+    @MainActor
+    func testCancelInstall_returnsFalseFromInflightSpawn() async {
+        let vm = PillViewModel()
+        let task = Task { await vm.playInstallSpawn(duration: 1.0) }
+        try? await Task.sleep(nanoseconds: 30_000_000)  // 30ms in
+        vm.cancelInstall()
+        let didFinish = await task.value
+        XCTAssertFalse(didFinish)
+    }
 }

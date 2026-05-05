@@ -9,6 +9,16 @@ enum PillPhase: Equatable, Hashable, Sendable {
     /// `progress` is the normalised 0…1 timeline driven by `PillViewModel.playSpawn(duration:)`.
     /// `PillView.body` reads `SpawnTimeline.state(at: progress)` to render the staged motion.
     case spawning(progress: Double)
+    /// Install intro animation (figure spawn + push + label-in). Driven by
+    /// `PillViewModel.playInstallSpawn(duration:)`. Progress is 0…1.
+    case installSpawning(progress: Double)
+    /// Compile-progress display. The pill is static; only the rim sweeps.
+    /// `progress` is the rim's leading-edge fraction 0…1, driven by
+    /// `PillViewModel.setInstallProgress(_:)`.
+    case installCompiling(progress: Double)
+    /// Install outro animation (rim fade + label fade + circle traverse +
+    /// bar cascade + comet ignite). Driven by `PillViewModel.playInstallOutro(duration:)`.
+    case installOutro(progress: Double)
     case armed
     case listening
     case processing
@@ -63,6 +73,74 @@ final class PillViewModel: ObservableObject {
     }
 
     private var spawnTask: Task<Bool, Never>?
+    private var installSpawnTask: Task<Bool, Never>?
+    private var installOutroTask: Task<Bool, Never>?
+
+    /// Drives the install intro from `progress = 0` to `progress = 1` over
+    /// `duration` seconds, then sets `phase = .installCompiling(progress: 0)`.
+    /// Polls at ~60Hz. Returns `true` if it ran to completion, `false` if cancelled.
+    @discardableResult
+    func playInstallSpawn(duration: TimeInterval = 2.0) async -> Bool {
+        installSpawnTask?.cancel()
+        let task = Task<Bool, Never> { @MainActor in
+            let start = CACurrentMediaTime()
+            phase = .installSpawning(progress: 0)
+            while !Task.isCancelled {
+                let elapsed = CACurrentMediaTime() - start
+                let t = min(1.0, elapsed / duration)
+                phase = .installSpawning(progress: t)
+                if t >= 1.0 { break }
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+            if Task.isCancelled { return false }
+            phase = .installCompiling(progress: 0)
+            return true
+        }
+        installSpawnTask = task
+        return await task.value
+    }
+
+    /// Updates the rim sweep progress while in `.installCompiling`. Clamps to [0, 1].
+    /// Caller must already be in the `.installCompiling` phase; calling this from
+    /// any other phase is a no-op (defensive — avoids accidentally yanking the
+    /// pill out of an idle/spawning state).
+    func setInstallProgress(_ p: Double) {
+        let clamped = min(max(p, 0), 1)
+        if case .installCompiling = phase {
+            phase = .installCompiling(progress: clamped)
+        }
+    }
+
+    /// Drives the install outro from `progress = 0` to `progress = 1` over
+    /// `duration` seconds, then sets `phase = .armed`. Returns `true` on
+    /// completion, `false` if cancelled.
+    @discardableResult
+    func playInstallOutro(duration: TimeInterval = 1.3) async -> Bool {
+        installOutroTask?.cancel()
+        let task = Task<Bool, Never> { @MainActor in
+            let start = CACurrentMediaTime()
+            phase = .installOutro(progress: 0)
+            while !Task.isCancelled {
+                let elapsed = CACurrentMediaTime() - start
+                let t = min(1.0, elapsed / duration)
+                phase = .installOutro(progress: t)
+                if t >= 1.0 { break }
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+            if Task.isCancelled { return false }
+            phase = .armed
+            return true
+        }
+        installOutroTask = task
+        return await task.value
+    }
+
+    /// Cancels both install intro and outro in-flight tasks. Phase is left at
+    /// whatever value the latest tick published; caller decides next phase.
+    func cancelInstall() {
+        installSpawnTask?.cancel(); installSpawnTask = nil
+        installOutroTask?.cancel(); installOutroTask = nil
+    }
 }
 
 /// The black pill that floats at the bottom of the screen.
