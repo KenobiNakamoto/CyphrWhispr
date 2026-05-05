@@ -5,6 +5,12 @@ import Combine
 enum AppState: Equatable {
     case idle
     case loadingModel
+    /// Hotkey pressed but pill is mid-spawn (and/or whisper still warming).
+    /// Audio capture has started; samples accumulate in `spawnBuffer`
+    /// until both the spawn animation completes AND `whisper.warmUp()`
+    /// has resolved, at which point we drain into `whisper.append(...)`
+    /// and advance to `.streaming`.
+    case spawning
     case armed
     case streaming
     case finalizing
@@ -33,6 +39,17 @@ final class AppCoordinator {
     /// In-flight model switch task; we cancel an earlier switch if the user
     /// rapid-fires through a few options in Settings.
     private var modelSwitchTask: Task<Void, Never>?
+    /// In-flight whisper warm-up task during the spawn window. Cancelled
+    /// when the user releases the hotkey mid-spawn (so we don't try to
+    /// drain into a stream that never starts).
+    private var whisperWarmAwaiter: Task<Void, Never>?
+    /// Set when `pill.onSpawnComplete` fires for the current session.
+    private var spawnAnimationDone: Bool = false
+    /// Set when `whisper.warmUp()` resolves for the current session.
+    private var whisperWarmDone: Bool = false
+    /// Audio captured during the spawn window. Drained into
+    /// `whisper.append(...)` the moment streaming begins.
+    private var spawnBuffer: [Float] = []
 
     init(prefs: PreferencesStore = .shared) {
         self.prefs = prefs
@@ -67,6 +84,16 @@ final class AppCoordinator {
         }
         audio.onSamples = { [weak self] samples in
             self?.feed(samples: samples)
+        }
+
+        // The pill fires this when its cinematic spawn animation finishes
+        // (or immediately on subsequent shows in the same session). It's
+        // one half of the precondition for advancing to `.streaming`; the
+        // other half is whisper.warmUp resolving.
+        pill.onSpawnComplete = { [weak self] in
+            guard let self else { return }
+            self.spawnAnimationDone = true
+            self.maybeBeginStreaming()
         }
 
         stateSubject
@@ -138,18 +165,22 @@ final class AppCoordinator {
     // MARK: - Hotkey
 
     private func handleHotkeyPress() {
-        guard state == .idle else { return }
+        // Accept presses during .idle AND during the brief .loadingModel
+        // window after launch — the pre-warm is happening in the background
+        // and we now have a "spawning" state + spawn buffer to bridge the gap.
+        guard state == .idle || state == .loadingModel else { return }
 
-        // Pre-flight: if Accessibility isn't granted (or has gone stale after a
-        // rebuild), bail with an actionable message instead of letting the user
-        // dictate into a silent paste pipeline.
         guard ClipboardPasteInjector.ensureAccessibilityTrusted(prompt: true) else {
             state = .error("Accessibility permission required. Toggle CyphrWhispr OFF then ON in System Settings → Privacy & Security → Accessibility.")
             scheduleReturnToIdle()
             return
         }
 
-        state = .armed
+        // Enter spawning state — pill plays the cinematic appearance, audio
+        // capture starts immediately, samples buffer locally instead of
+        // streaming until both the animation completes and whisper is warm.
+        state = .spawning
+        spawnBuffer.removeAll(keepingCapacity: true)
         pill.show()
 
         do {
@@ -161,15 +192,54 @@ final class AppCoordinator {
             return
         }
 
-        // Snapshot the user's clipboard so we can restore it when the session ends.
         typingQueue.async { [weak self] in
             guard let self else { return }
             self.sessionClipboard = PasteboardSnapshot.capture()
             self.typedSoFar = ""
         }
 
-        // Start the streaming session and feed each partial through the live
-        // typing pipeline.
+        // Reset both readiness flags. The pill controller's `onSpawnComplete`
+        // callback (wired up in `start()`) flips `spawnAnimationDone`; the
+        // warm-up Task below flips `whisperWarmDone`. The second one to fire
+        // calls `maybeBeginStreaming()` which actually advances state.
+        spawnAnimationDone = false
+        whisperWarmDone = false
+
+        whisperWarmAwaiter?.cancel()
+        whisperWarmAwaiter = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.whisper.warmUp()
+            } catch {
+                await MainActor.run {
+                    self.state = .error("Model load failed: \(error.localizedDescription)")
+                    self.endSession(restoreClipboard: true)
+                }
+                return
+            }
+            await MainActor.run {
+                self.whisperWarmDone = true
+                self.maybeBeginStreaming()
+            }
+        }
+    }
+
+    /// Called from two places — both fire only after the precondition they
+    /// represent has been met:
+    ///   • `pill.onSpawnComplete` callback flips `spawnAnimationDone`
+    ///   • the warm-up Task above flips `whisperWarmDone`
+    /// Whichever arrives second satisfies the guard and advances state to
+    /// `.streaming`. Idempotent — re-entering after `.streaming` is a no-op.
+    private func maybeBeginStreaming() {
+        guard state == .spawning else { return }
+        guard spawnAnimationDone && whisperWarmDone else { return }
+        beginStreaming()
+    }
+
+    /// Open a streaming session, drain any buffered audio, and transition to
+    /// `.streaming`. Caller MUST be on the main actor and MUST have verified
+    /// `state == .spawning` (i.e. the user hasn't released the hotkey yet).
+    private func beginStreaming() {
         streamConsumer = Task { [weak self] in
             guard let self else { return }
             let stream = await self.whisper.startStream()
@@ -178,9 +248,32 @@ final class AppCoordinator {
             }
         }
         state = .streaming
+
+        // Drain whatever audio piled up during the spawn window.
+        let drained = spawnBuffer
+        spawnBuffer.removeAll(keepingCapacity: true)
+        if !drained.isEmpty {
+            Task { [whisper] in
+                await whisper.append(samples: drained)
+            }
+        }
     }
 
     private func handleHotkeyRelease() {
+        // Release during .spawning is valid — user gave up before whisper
+        // was ready. Cancel cleanly: stop audio, drop the buffer, hide
+        // the pill, restore clipboard.
+        if state == .spawning {
+            whisperWarmAwaiter?.cancel()
+            whisperWarmAwaiter = nil
+            spawnAnimationDone = false
+            whisperWarmDone = false
+            spawnBuffer.removeAll(keepingCapacity: false)
+            audio.stop()
+            endSession(restoreClipboard: true)
+            return
+        }
+
         guard state == .streaming else { return }
         state = .finalizing
         // Drive the pill into its "processing / thinking" animation while the
@@ -204,9 +297,17 @@ final class AppCoordinator {
     }
 
     private func feed(samples: [Float]) {
-        guard state == .streaming else { return }
-        Task { [whisper] in
-            await whisper.append(samples: samples)
+        switch state {
+        case .streaming:
+            Task { [whisper] in
+                await whisper.append(samples: samples)
+            }
+        case .spawning:
+            // Buffer locally — we'll drain into whisper.append once the spawn
+            // animation completes AND whisper.warmUp() resolves.
+            spawnBuffer.append(contentsOf: samples)
+        default:
+            return
         }
     }
 

@@ -29,7 +29,7 @@ final class StatusItemController {
         case .idle, .loadingModel:
             button.image = makeLogoIcon()
             button.toolTip = "CyphrWhispr"
-        case .armed, .streaming, .finalizing, .injecting:
+        case .spawning, .armed, .streaming, .finalizing, .injecting:
             // Same filled logo, just a tooltip change. The pill window itself
             // is the primary "I'm recording" signal — duplicating that in the
             // menu bar with a different glyph would just be visual noise.
