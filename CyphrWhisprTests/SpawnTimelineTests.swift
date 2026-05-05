@@ -3,6 +3,28 @@ import XCTest
 
 final class SpawnTimelineTests: XCTestCase {
 
+    // MARK: - Geometry (Task 2 — 7-bar geometry matching new idle)
+
+    func test_barColumns_areSevenPixelExactPositions() {
+        XCTAssertEqual(SpawnTimeline.barColumns.count, 7)
+        XCTAssertEqual(SpawnTimeline.barColumns,
+                       [90, 97, 104, 111, 118, 125, 132])
+    }
+
+    func test_barWidth_isThreePoints() {
+        XCTAssertEqual(SpawnTimeline.barWidth, 3, accuracy: 0.001)
+    }
+
+    func test_barHeights_matchIdleProfile() {
+        XCTAssertEqual(SpawnTimeline.barHeights.count, 7)
+        XCTAssertEqual(SpawnTimeline.barHeights,
+                       [7, 12, 15, 24, 15, 12, 7])
+    }
+
+    func test_dotTraverseEndX_alignsWithIdleCircleX() {
+        XCTAssertEqual(SpawnTimeline.dotTraverseEndX, 47, accuracy: 0.001)
+    }
+
     // MARK: - Spawn phase (0 → 0.167)
 
     func test_atTimeZero_figuresAreInvisibleAtSeedScale() {
@@ -13,6 +35,7 @@ final class SpawnTimelineTests: XCTestCase {
         XCTAssertEqual(s.triangleX, 3.5, accuracy: 0.001)
         XCTAssertEqual(s.dotX, 25, accuracy: 0.001)
         XCTAssertEqual(s.rimOpacity, 0, accuracy: 0.001)
+        XCTAssertEqual(s.barOpacities.count, 7)
         XCTAssertTrue(s.barOpacities.allSatisfy { $0 == 0 })
     }
 
@@ -61,15 +84,19 @@ final class SpawnTimelineTests: XCTestCase {
     func test_atTraverseStart_circleBeginsLeftward_noBarsRevealedYet() {
         let s = SpawnTimeline.state(at: 0.556)
         XCTAssertEqual(s.dotX, 135, accuracy: 0.5)
-        XCTAssertEqual(s.barOpacities[4], 0, accuracy: 0.01)
+        XCTAssertEqual(s.barOpacities.count, 7)
+        // Rightmost bar (index 6) starts revealing at traverseT=0; at the
+        // exact traverse boundary t=pHoldEnd, traverseT=0 → progress=0 → 0.
+        XCTAssertEqual(s.barOpacities[6], 0, accuracy: 0.01)
     }
 
     func test_atTraverseEnd_circleAtFinalPosition_allBarsVisible() {
         let s = SpawnTimeline.state(at: 0.833)
-        XCTAssertEqual(s.dotX, 46, accuracy: 0.5)
-        // Bars cascade right-to-left during traverse — bar 5 (rightmost) reveals
-        // first, bar 1 (leftmost) reveals last. By traverse end all should be
+        XCTAssertEqual(s.dotX, 47, accuracy: 0.5)
+        // Bars cascade right-to-left during traverse — bar 6 (rightmost) reveals
+        // first, bar 0 (leftmost) reveals last. By traverse end all should be
         // fully visible.
+        XCTAssertEqual(s.barOpacities.count, 7)
         for (i, opacity) in s.barOpacities.enumerated() {
             XCTAssertEqual(opacity, 1, accuracy: 0.05, "bar \(i) should be visible at traverse end")
         }
@@ -78,7 +105,7 @@ final class SpawnTimelineTests: XCTestCase {
     func test_barsRevealRightToLeft_duringTraverse() {
         // Mid-traverse: rightmost bars should be more visible than leftmost.
         let s = SpawnTimeline.state(at: 0.7)
-        XCTAssertGreaterThan(s.barOpacities[4], s.barOpacities[0],
+        XCTAssertGreaterThan(s.barOpacities[6], s.barOpacities[0],
                              "rightmost bar should reveal earlier than leftmost during the right-to-left cascade")
     }
 
@@ -111,7 +138,7 @@ final class SpawnTimelineTests: XCTestCase {
     func test_progressAboveOne_clampsToFinalState() {
         let s = SpawnTimeline.state(at: 1.5)
         XCTAssertEqual(s.rimOpacity, 1, accuracy: 0.01)
-        XCTAssertEqual(s.dotX, 46, accuracy: 0.5)
+        XCTAssertEqual(s.dotX, 47, accuracy: 0.5)
     }
 
     func test_negativeProgress_clampsToInitialState() {

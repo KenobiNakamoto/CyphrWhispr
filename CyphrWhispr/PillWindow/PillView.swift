@@ -195,15 +195,15 @@ struct PillView: View {
                 .offset(x: s.dotX,
                         y: (Self.pillHeight - 17) / 2)
 
-            // Bars — five individual rectangles at fixed columns to the
-            // right of the circle's final position. Bar columns are derived
-            // by spreading evenly across the waveform area
-            // (left = 70 → right = 156, production scale).
-            ForEach(0..<5, id: \.self) { i in
-                let barHeight: CGFloat = (i == 2)
-                    ? SpawnTimeline.barCentreHeight
-                    : SpawnTimeline.barShortHeight
-                Rectangle()
+            // Bars — seven individual capsules at the pixel-exact columns
+            // used by the idle waveform. Matching the idle geometry here
+            // means the spawn end-frame is pixel-identical to the idle
+            // frame, so there is no reflow when the view flips to
+            // `normalBody`. Plain white during reveal — the silver gradient
+            // takes over once the pill transitions to `.armed`.
+            ForEach(0..<7, id: \.self) { i in
+                let barHeight = SpawnTimeline.barHeights[i]
+                Capsule()
                     .fill(Color.white)
                     .frame(width: SpawnTimeline.barWidth, height: barHeight)
                     .opacity(s.barOpacities[i])

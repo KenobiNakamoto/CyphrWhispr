@@ -19,7 +19,7 @@ struct SpawnState: Equatable {
     var triangleX: CGFloat
     /// Circle's left position relative to the pill's left edge.
     var dotX: CGFloat
-    /// Five waveform-bar opacities in left-to-right order. Reveal cascades
+    /// Seven waveform-bar opacities in left-to-right order. Reveal cascades
     /// right-to-left during the traverse phase (rightmost first).
     var barOpacities: [Double]
     /// Comet-rim opacity. Stays 0 until the ignite phase begins (~0.847).
@@ -63,34 +63,22 @@ enum SpawnTimeline {
     private static let dotSpawnX:         CGFloat = 25
     private static let dotAnticipationX:  CGFloat = 23.5
     private static let dotPushHoldX:      CGFloat = 135
-    private static let dotTraverseEndX:   CGFloat = 46
+    static let dotTraverseEndX:           CGFloat = 47
 
     // MARK: - Bar geometry (public — read by PillView's spawnBody)
 
-    /// Five evenly-spaced waveform bar columns, in points relative to the
-    /// pill's left edge. Production scale (170pt-wide pill).
-    static let barColumns: [CGFloat] = [70, 92, 113, 135, 156]
+    /// Seven waveform bar columns at pixel-exact positions, in points relative
+    /// to the pill's left edge. Matches the idle pill's `normalBody` layout
+    /// (7 bars × 3pt wide × 4pt spacing). Production scale (170pt-wide pill).
+    static let barColumns: [CGFloat] = [90, 97, 104, 111, 118, 125, 132]
 
-    /// Width of each bar (pt).
-    static let barWidth: CGFloat = 2
+    /// Width of each bar (pt). Matches the idle waveform.
+    static let barWidth: CGFloat = 3
 
-    /// Height of the centre (3rd) bar at rest. Tallest of the five.
-    static let barCentreHeight: CGFloat = 14
-
-    /// Height of the four non-centre bars at rest.
-    static let barShortHeight: CGFloat = 6
-
-    /// Each bar's reveal window. The traverse phase spans 0.556 → 0.833
-    /// (Δ ≈ 0.277). Bars cascade right-to-left with ~0.05 stagger each;
-    /// each bar's individual fade takes ~0.05 of normalised time.
-    private static let barRevealStarts: [Double] = [
-        0.760,  // bar 1 (leftmost) — last to reveal
-        0.710,  // bar 2
-        0.660,  // bar 3 (centre)
-        0.610,  // bar 4
-        0.560,  // bar 5 (rightmost) — first to reveal
-    ]
-    private static let barRevealDuration: Double = 0.045
+    /// Per-bar resting heights (pt). Symmetric profile peaking at the centre
+    /// bar — matches the idle waveform exactly so the spawn end-frame is
+    /// pixel-identical to the idle frame.
+    static let barHeights: [CGFloat] = [7, 12, 15, 24, 15, 12, 7]
 
     // MARK: - Public API
 
@@ -181,10 +169,16 @@ enum SpawnTimeline {
     }
 
     private static func barOpacities(at t: Double) -> [Double] {
-        barRevealStarts.map { start in
-            if t < start { return 0 }
-            if t > start + barRevealDuration { return 1 }
-            return easeOut((t - start) / barRevealDuration)
+        // Cascade reveal across the traverse phase (pHoldEnd → pTraverseEnd).
+        // Rightmost bar (index 6) reveals first at traverseT=0; leftmost
+        // (index 0) starts at traverseT=0.80. Each bar fades over 0.20 of
+        // traverseT, so bar 0 finishes exactly at traverseT=1.0.
+        let traverseT = clamp((t - pHoldEnd) / (pTraverseEnd - pHoldEnd), 0, 1)
+        return (0..<7).map { i in
+            let reverseIndex = Double(6 - i)        // 6 → 0 (rightmost first)
+            let startT = reverseIndex / 6.0 * 0.80  // 0.0, 0.133, 0.267, 0.40, 0.533, 0.667, 0.80
+            let progress = clamp((traverseT - startT) / 0.20, 0, 1)
+            return easeOut(progress)
         }
     }
 
