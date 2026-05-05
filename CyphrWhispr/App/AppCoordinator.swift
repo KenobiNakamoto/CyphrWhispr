@@ -139,6 +139,22 @@ final class AppCoordinator {
         if case .streaming = state {
             audio.stop()
             endSession(restoreClipboard: true)
+        } else if case .spawning = state {
+            // User picked a different model while still mid-spawn (held the
+            // hotkey before opening Settings, or a programmatic switch fired).
+            // Treat exactly like an early hotkey release: cancel the warm-up
+            // awaiter that was racing against the OLD model's load, drop the
+            // partial audio buffer, stop the mic, hide the pill, restore the
+            // clipboard. The new model will pre-warm in the background as
+            // usual; the pill replay flag was already armed by
+            // PreferencesStore.activeModelDidChange.
+            whisperWarmAwaiter?.cancel()
+            whisperWarmAwaiter = nil
+            spawnAnimationDone = false
+            whisperWarmDone = false
+            spawnBuffer.removeAll(keepingCapacity: false)
+            audio.stop()
+            endSession(restoreClipboard: true)
         }
         state = .loadingModel
         modelSwitchTask = Task { [weak self] in
