@@ -18,6 +18,9 @@ final class PreferencesStore: ObservableObject {
         static let activeModelID = "Whisper.activeModelID"
         static let didCompleteFirstRun = "App.didCompleteFirstRun"
         static let accentHex = "App.accentColorHex"
+        static let polishEnabled = "Polish.enabled"
+        static let polishPromptIsCustomised = "Polish.promptIsCustomised"
+        static let polishCustomPrompt = "Polish.customPrompt"
     }
 
     /// The original brand violet — what the app ships with and what the
@@ -55,6 +58,48 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
+    // MARK: - Polish (Apple Foundation Models cleanup)
+    //
+    // Off by default in v1 — polishing is an opt-in. The user toggles it on in
+    // Settings → Polish, where they can also see and edit the cleanup prompt.
+    // Three pieces of state:
+    //   • `polishEnabled`              — the master switch
+    //   • `polishPromptIsCustomised`   — true once the user has clicked "Customise prompt"
+    //   • `polishCustomPrompt`         — the user-edited prompt; only used when customised
+    //
+    // The "effective" prompt is computed below: returns the custom prompt if
+    // the user has customised, otherwise the default from `CleanupPrompt`.
+
+    /// Master switch: should we run a cleanup pass on the final transcription?
+    /// Even when ON, the cleaner respects OS availability — see
+    /// `TranscriptionCleaner.availability` for the actual feature gate.
+    @Published var polishEnabled: Bool {
+        didSet {
+            guard polishEnabled != oldValue else { return }
+            UserDefaults.standard.set(polishEnabled, forKey: Key.polishEnabled)
+        }
+    }
+
+    /// True once the user has clicked "Customise prompt" and edited the
+    /// cleanup instructions away from the default. While false, the default
+    /// prompt is used and the prompt UI shows the read-only baseline.
+    @Published var polishPromptIsCustomised: Bool {
+        didSet {
+            guard polishPromptIsCustomised != oldValue else { return }
+            UserDefaults.standard.set(polishPromptIsCustomised, forKey: Key.polishPromptIsCustomised)
+        }
+    }
+
+    /// User-edited cleanup prompt. Only consulted when
+    /// `polishPromptIsCustomised == true`. Stored separately from the toggle
+    /// so the user's edits survive flipping customised → default → customised.
+    @Published var polishCustomPrompt: String {
+        didSet {
+            guard polishCustomPrompt != oldValue else { return }
+            UserDefaults.standard.set(polishCustomPrompt, forKey: Key.polishCustomPrompt)
+        }
+    }
+
     private init() {
         let defaults = UserDefaults.standard
         let storedModel = defaults.string(forKey: Key.activeModelID)
@@ -76,6 +121,15 @@ final class PreferencesStore: ObservableObject {
         // Accent is always present (defaulted) so the app paints sensibly on a
         // fresh install before the user has visited the picker.
         self.accentHex = storedHex ?? Self.defaultAccentHex
+
+        // Polish defaults: off, prompt at baseline. The customPrompt slot is
+        // pre-seeded with the default so the textarea has something sensible
+        // to show the moment the user clicks "Customise prompt" — they edit
+        // a copy, they don't start from a blank field.
+        self.polishEnabled = defaults.bool(forKey: Key.polishEnabled)
+        self.polishPromptIsCustomised = defaults.bool(forKey: Key.polishPromptIsCustomised)
+        self.polishCustomPrompt = defaults.string(forKey: Key.polishCustomPrompt)
+            ?? CleanupPrompt.defaultPrompt
     }
 
     /// Mark first-run as done; called once the user has accepted (or changed
@@ -98,6 +152,35 @@ final class PreferencesStore: ObservableObject {
     /// Restore the brand violet.
     func resetAccent() {
         accentHex = Self.defaultAccentHex
+    }
+
+    // MARK: - Polish derived helpers
+
+    /// The cleanup prompt that will actually be sent to the language model.
+    /// Customised → user's edit. Default → the canonical prompt from
+    /// `CleanupPrompt`. Computed (not stored) so it always reflects the
+    /// current customise toggle without needing a separate didSet sync.
+    var effectivePolishPrompt: String {
+        polishPromptIsCustomised ? polishCustomPrompt : CleanupPrompt.defaultPrompt
+    }
+
+    /// User clicks "Customise prompt": flip into customised mode. Seeds the
+    /// editable text with whatever they were just looking at (the default)
+    /// so they can edit-in-place rather than starting from blank.
+    func enablePolishCustomPrompt() {
+        if !polishPromptIsCustomised {
+            polishCustomPrompt = CleanupPrompt.defaultPrompt
+            polishPromptIsCustomised = true
+        }
+    }
+
+    /// User clicks "Reset to default": flip out of customised mode. We DON'T
+    /// wipe `polishCustomPrompt` — keeping the previous edits means clicking
+    /// Customise again restores the user's last version rather than the
+    /// pristine default. (If they want to start over, the editable textarea
+    /// has a "Restore default text" affordance.)
+    func resetPolishPrompt() {
+        polishPromptIsCustomised = false
     }
 }
 
