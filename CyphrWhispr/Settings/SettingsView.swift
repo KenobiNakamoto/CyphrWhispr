@@ -70,7 +70,7 @@ private struct SegmentedTabs: View {
                     }
                 } label: {
                     Text(tab.rawValue)
-                        .font(.system(size: 13, weight: isActive ? .semibold : .medium))
+                        .font(SettingsDesign.krButton(size: 13, active: isActive))
                         .foregroundStyle(isActive
                                          ? SettingsDesign.textPrimary
                                          : SettingsDesign.textSecondary)

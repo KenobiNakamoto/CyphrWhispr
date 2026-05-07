@@ -25,10 +25,10 @@ struct ShortcutTabView: View {
                         SettingsIconBadge(systemName: "command")
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Dictation hotkey")
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(SettingsDesign.krTitle(size: 17))
                                 .foregroundStyle(SettingsDesign.textPrimary)
                             Text("Hold to dictate")
-                                .font(.system(size: 12))
+                                .font(SettingsDesign.krBody(size: 12))
                                 .foregroundStyle(SettingsDesign.textSecondary)
                         }
                         Spacer()
@@ -42,13 +42,13 @@ struct ShortcutTabView: View {
                     ShortcutField()
 
                     Text("Click the shortcut field, then press the key combination you want to use.")
-                        .font(.system(size: 12))
+                        .font(SettingsDesign.krBody(size: 12))
                         .foregroundStyle(SettingsDesign.textSecondary)
                     Text("Press any combination of ⌃ ⌥ ⌘ ⇧ plus a key.")
-                        .font(.system(size: 12))
+                        .font(SettingsDesign.krBody(size: 12))
                         .foregroundStyle(SettingsDesign.textSecondary)
                     Text("The shortcut takes effect immediately.")
-                        .font(.system(size: 12))
+                        .font(SettingsDesign.krBody(size: 12))
                         .foregroundStyle(SettingsDesign.textSecondary)
 
                     Divider()
@@ -57,7 +57,7 @@ struct ShortcutTabView: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Tips for picking a shortcut")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(SettingsDesign.krBody(size: 13, weight: .semibold))
                             .foregroundStyle(SettingsDesign.textPrimary)
 
                         TipRow(
@@ -135,7 +135,7 @@ private struct TipRow: View {
                 )
                 .frame(width: 22, height: 22)
             Text(text)
-                .font(.system(size: 12))
+                .font(SettingsDesign.krBody(size: 12))
                 .foregroundStyle(SettingsDesign.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -177,7 +177,7 @@ struct MiniPillLogo: View {
 struct GhostButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium))
+            .font(SettingsDesign.krBody(size: 12, weight: .medium))
             .foregroundStyle(SettingsDesign.textPrimary)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)

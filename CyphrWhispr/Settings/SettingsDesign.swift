@@ -1,14 +1,21 @@
 import SwiftUI
 
-/// Shared design tokens for the Settings window. Colours, gradients, and
-/// reusable view-modifiers all live here so the three tabs read consistently
-/// and so future tweaks to the palette only have to happen in one place.
+/// Shared design tokens for the Settings window. Colours, gradients, fonts,
+/// and reusable view-modifiers all live here so the three tabs read
+/// consistently and so future tweaks only have to happen in one place.
 ///
 /// **Accent colors live on `PreferencesStore`, not here.** That's the
 /// user-controlled part: the picker on the About tab writes
 /// `prefs.accentHex` and every accent-using view re-reads `prefs.accent`,
 /// `prefs.accentWash`, `prefs.activeTabFill`, etc. SettingsDesign owns the
 /// fixed parts of the palette only — backgrounds, card surfaces, text shades.
+///
+/// **Typography is Monaspace Krypton** (GitHub Next, SIL OFL). The font
+/// files live under `Resources/Fonts/` and are registered at app launch via
+/// `ATSApplicationFontsPath` in Info.plist. Use the `kr*` helpers below
+/// instead of `Font.system(...)` anywhere inside the Settings window so
+/// the entire surface stays mono and on-brand. Outside Settings (the pill,
+/// menu-bar items) intentionally keeps the system font.
 enum SettingsDesign {
     // MARK: - Palette
     /// Window backdrop, deepest stop in the bottom-edge gradient (#050506).
@@ -26,6 +33,45 @@ enum SettingsDesign {
     static let textPrimary   = Color.white
     static let textSecondary = Color.white.opacity(0.62)
     static let textTertiary  = Color.white.opacity(0.42)
+
+    // MARK: - Typography (Monaspace Krypton)
+    //
+    // PostScript names match the bundled .otf files under
+    // `Resources/Fonts/`. SwiftUI looks up custom fonts by their
+    // PostScript name, NOT the family name — `MonaspaceKrypton-Regular`
+    // works; `Monaspace Krypton` would silently fall back to system mono.
+
+    private static func krypton(weight: Font.Weight, size: CGFloat) -> Font {
+        let name: String
+        switch weight {
+        case .medium:                  name = "MonaspaceKrypton-Medium"
+        case .semibold:                name = "MonaspaceKrypton-SemiBold"
+        case .bold, .heavy, .black:    name = "MonaspaceKrypton-Bold"
+        default:                       name = "MonaspaceKrypton-Regular"
+        }
+        return .custom(name, size: size)
+    }
+
+    /// Section / tab header — large, semibold.
+    static func krTitle(size: CGFloat = 22) -> Font {
+        krypton(weight: .semibold, size: size)
+    }
+    /// Subtle subtitle under a title — secondary text colour, regular weight.
+    static func krSubtitle(size: CGFloat = 13) -> Font {
+        krypton(weight: .regular, size: size)
+    }
+    /// Default body text inside Settings.
+    static func krBody(size: CGFloat = 13, weight: Font.Weight = .regular) -> Font {
+        krypton(weight: weight, size: size)
+    }
+    /// Small label-style text used in metadata rows, hints, and badges.
+    static func krCaption(size: CGFloat = 11, weight: Font.Weight = .regular) -> Font {
+        krypton(weight: weight, size: size)
+    }
+    /// Buttons / segmented tab labels.
+    static func krButton(size: CGFloat = 13, active: Bool = false) -> Font {
+        krypton(weight: active ? .semibold : .medium, size: size)
+    }
 
     // MARK: - Gradients
 

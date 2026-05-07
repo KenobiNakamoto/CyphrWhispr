@@ -32,10 +32,10 @@ struct AboutTabView: View {
                     AppIconBadge(size: 64)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("CyphrWhispr")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(SettingsDesign.krTitle(size: 20))
                             .foregroundStyle(SettingsDesign.textPrimary)
                         Text("Local, private, fast speech-to-text\nfor any text field on your Mac.")
-                            .font(.system(size: 12))
+                            .font(SettingsDesign.krBody(size: 12))
                             .foregroundStyle(SettingsDesign.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -81,10 +81,10 @@ struct AboutTabView: View {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Version \(version) (\(build))")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(SettingsDesign.krCaption(size: 11, weight: .medium))
                         .foregroundStyle(SettingsDesign.textPrimary)
                     Text("© 2026 CyphrWhispr. All rights reserved.")
-                        .font(.system(size: 10))
+                        .font(SettingsDesign.krCaption(size: 10))
                         .foregroundStyle(SettingsDesign.textTertiary)
                 }
                 Spacer()
@@ -199,10 +199,10 @@ private struct AccentPickerCard: View {
                     SettingsIconBadge(systemName: "paintpalette.fill")
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Accent color")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(SettingsDesign.krTitle(size: 15))
                             .foregroundStyle(SettingsDesign.textPrimary)
                         Text("Personalize highlights, glows, and active states.")
-                            .font(.system(size: 12))
+                            .font(SettingsDesign.krBody(size: 12))
                             .foregroundStyle(SettingsDesign.textSecondary)
                     }
                     Spacer()
@@ -231,8 +231,10 @@ private struct AccentPickerCard: View {
                 }
 
                 HStack {
+                    // Mono font already has fixed-width digits; no need
+                    // for .monospacedDigit() (which only applies to system).
                     Text("Current: \(prefs.accentHex.uppercased())")
-                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .font(SettingsDesign.krCaption(size: 11, weight: .medium))
                         .foregroundStyle(SettingsDesign.textTertiary)
                     Spacer()
                     if prefs.accentHex.caseInsensitiveCompare(PreferencesStore.defaultAccentHex) != .orderedSame {
@@ -297,10 +299,10 @@ private struct FeatureRow: View {
             SettingsIconBadge(systemName: icon, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(SettingsDesign.krBody(size: 13, weight: .semibold))
                     .foregroundStyle(SettingsDesign.textPrimary)
                 Text(subtitle)
-                    .font(.system(size: 11))
+                    .font(SettingsDesign.krCaption(size: 11))
                     .foregroundStyle(SettingsDesign.textSecondary)
             }
             Spacer()

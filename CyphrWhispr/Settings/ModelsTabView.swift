@@ -22,7 +22,7 @@ struct ModelsTabView: View {
                     // Header row inside the card.
                     HStack {
                         Text("Available models")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(SettingsDesign.krBody(size: 13, weight: .semibold))
                             .foregroundStyle(SettingsDesign.textPrimary)
                         Spacer()
                         Button("Import custom…") { manager.importCustomModel() }
@@ -59,7 +59,7 @@ struct ModelsTabView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(SettingsDesign.textTertiary)
                 Text("Models stored at \(AppSupportPaths.modelsRoot.path)")
-                    .font(.system(size: 11))
+                    .font(SettingsDesign.krCaption(size: 11))
                     .foregroundStyle(SettingsDesign.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -99,7 +99,7 @@ struct ModelsTabView: View {
                 .frame(width: 26, height: 26)
 
             Text(ModelRecommender.explanation(for: profile, model: recommended))
-                .font(.system(size: 12.5))
+                .font(SettingsDesign.krBody(size: 12.5))
                 .foregroundStyle(SettingsDesign.textSecondary)
 
             Spacer()
@@ -152,11 +152,11 @@ private struct ModelRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(row.displayName)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(SettingsDesign.krBody(size: 13, weight: .semibold))
                         .foregroundStyle(isActive ? prefs.accent : SettingsDesign.textPrimary)
                     if row.isCustom {
                         Text("CUSTOM")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(SettingsDesign.krCaption(size: 9, weight: .bold))
                             .foregroundStyle(SettingsDesign.textSecondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -166,7 +166,7 @@ private struct ModelRowView: View {
                     }
                 }
                 Text(row.subtitle)
-                    .font(.system(size: 11))
+                    .font(SettingsDesign.krCaption(size: 11))
                     .foregroundStyle(SettingsDesign.textSecondary)
                     .lineLimit(1)
             }
@@ -194,12 +194,14 @@ private struct ModelRowView: View {
     @ViewBuilder
     private var statusBadge: some View {
         if row.isDownloaded {
+            // Mono font means digits are already monospaced — no need for
+            // .monospacedDigit() (which only applies to system fonts anyway).
             Text(formatBytes(row.diskBytes))
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .font(SettingsDesign.krCaption(size: 11, weight: .medium))
                 .foregroundStyle(isActive ? prefs.accent : SettingsDesign.textSecondary)
         } else {
             Text("Not downloaded")
-                .font(.system(size: 11))
+                .font(SettingsDesign.krCaption(size: 11))
                 .foregroundStyle(SettingsDesign.textTertiary)
         }
     }
