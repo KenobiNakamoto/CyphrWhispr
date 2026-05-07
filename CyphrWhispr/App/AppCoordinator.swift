@@ -33,6 +33,16 @@ final class AppCoordinator {
     private let whisper: WhisperEngine
     private let injector = ClipboardPasteInjector()
     private let prefs: PreferencesStore
+    /// Apple Foundation Models cleanup. Stateless — one shared instance used
+    /// for every commit. Whether it actually runs is gated by
+    /// `prefs.polishEnabled` AND the cleaner's own availability check (which
+    /// confirms we're on macOS 26+, Apple Intelligence is enabled, etc.).
+    private let cleaner: TranscriptionCleaner = FoundationModelsCleaner()
+    /// Hard cap on how long we'll wait for the cleanup pass before giving
+    /// up and pasting the raw transcript. Keeps the UX from hanging if the
+    /// model takes a coffee break or the user dictated something unusually
+    /// long.
+    private static let polishTimeout: TimeInterval = 3.0
 
     private var cancellables = Set<AnyCancellable>()
     private var streamConsumer: Task<Void, Never>?
@@ -301,7 +311,12 @@ final class AppCoordinator {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let finalText = try await self.whisper.finishStream()
+                let finalRaw = try await self.whisper.finishStream()
+                // Optional cleanup pass before we type the final commit.
+                // `polish(...)` returns the raw text on any failure mode
+                // (disabled, unavailable, timeout, model rejection) so the
+                // user always gets _something_ pasted.
+                let finalText = await self.polish(rawTranscript: finalRaw)
                 await MainActor.run { self.commitFinalText(finalText) }
             } catch {
                 await MainActor.run {
@@ -309,6 +324,46 @@ final class AppCoordinator {
                     self.endSession(restoreClipboard: true)
                 }
             }
+        }
+    }
+
+    /// Optional Apple Foundation Models cleanup pass. Sits between
+    /// `whisper.finishStream()` and `commitFinalText(...)` and folds the LM's
+    /// output into the existing typing pipeline.
+    ///
+    /// Behavioural contract:
+    ///   • If polish is OFF in settings → return raw verbatim, no LM call.
+    ///   • If polish is ON but the OS doesn't support it → return raw, log it.
+    ///   • If the LM call times out / errors / returns mangled text → return
+    ///     raw. We always paste _something_; polish is opportunistic.
+    ///   • If the cleaner says the input was empty silence → return "" so the
+    ///     typeDiff path backspaces out the streamed partials and leaves no
+    ///     trace. This is the only case where we paste less than raw.
+    ///
+    /// The pill stays in `.processing` (travelling-wave bars) for the whole
+    /// cleanup window. A dedicated polish-state pill animation can come later;
+    /// for now the user sees "still working" until the diff types.
+    private func polish(rawTranscript raw: String) async -> String {
+        guard prefs.polishEnabled else { return raw }
+
+        let outcome = await cleaner.clean(
+            raw,
+            prompt: prefs.effectivePolishPrompt,
+            timeout: Self.polishTimeout
+        )
+
+        switch outcome {
+        case .cleaned(let text):
+            return text
+        case .empty:
+            // Backspace partials, type nothing. Silence dictation leaves no trace.
+            return ""
+        case .skipped(let reason):
+            NSLog("[CyphrWhispr] Polish skipped: \(reason)")
+            return raw
+        case .rejected(let reason):
+            NSLog("[CyphrWhispr] Polish rejected: \(reason)")
+            return raw
         }
     }
 
