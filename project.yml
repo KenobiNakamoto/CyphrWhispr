@@ -44,6 +44,12 @@ targets:
           - "**/*.md"
     resources:
       - path: CyphrWhispr/Resources/Assets.xcassets
+      # Bundled fonts. The four .otf files get copied to Resources/Fonts/
+      # in the built app bundle; ATSApplicationFontsPath in Info.plist
+      # points at that subdirectory so macOS registers them at launch.
+      # SIL OFL — see Resources/Fonts/LICENSE.txt for the license bundled
+      # with the binary alongside the fonts themselves.
+      - path: CyphrWhispr/Resources/Fonts
     dependencies:
       - package: KeyboardShortcuts
       - package: WhisperKit
@@ -62,6 +68,12 @@ targets:
         LSUIElement: true
         NSMicrophoneUsageDescription: "CyphrWhispr listens to your microphone only when you hold or toggle the dictation hotkey, transcribes locally on your Mac, and never sends audio anywhere."
         NSHumanReadableCopyright: ""
+        # Tells AppKit to register every font file inside the bundle's
+        # Resources/ directory at launch — used to ship Monaspace Krypton
+        # (the Settings UI font) without per-user installation. We use "."
+        # rather than "Fonts/" because Xcode resource refs in this project
+        # land flat in Contents/Resources/ regardless of source layout.
+        ATSApplicationFontsPath: "."
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: CyphrWhispr/Resources/CyphrWhispr.entitlements

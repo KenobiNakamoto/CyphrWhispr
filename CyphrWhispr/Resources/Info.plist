@@ -28,5 +28,7 @@
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>CyphrWhispr listens to your microphone only when you hold or toggle the dictation hotkey, transcribes locally on your Mac, and never sends audio anywhere.</string>
+	<key>ATSApplicationFontsPath</key>
+	<string>.</string>
 </dict>
 </plist>
