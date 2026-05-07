@@ -18,10 +18,17 @@ enum WhisperBackendError: Error, LocalizedError {
 /// Streams partial transcripts as audio is appended, then commits a final transcript on `finishStream`.
 ///
 /// True token-level streaming in WhisperKit requires `AudioStreamTranscriber` which manages its own
-/// microphone capture — that conflicts with our `AudioCaptureEngine`. Instead, we run periodic full
-/// re-transcriptions of the accumulated buffer (~800 ms cadence) which gives the same UX feel:
-/// words appear in the pill shortly after you say them. For typical dictation utterances (<30 s)
-/// this is fast enough; for longer dictation we'd switch to chunked streaming in v1.1.
+/// microphone capture — that conflicts with our `AudioCaptureEngine`. Instead, we run periodic
+/// re-transcriptions of a sliding window (~800 ms cadence). After every transcribe, segments that
+/// ended sufficiently far in the past are **committed** — their text is locked and their audio is
+/// dropped from the buffer, so subsequent partials only re-transcribe the still-uncommitted tail.
+/// This bounds three things that would otherwise grow without limit during a long dictation:
+///
+///  1. **Per-partial transcribe time** — always proportional to the tail window, not the whole session
+///  2. **finishStream cost** — finalize is cheap because most of the audio is already committed
+///  3. **Live revisions** — Whisper can only revise the still-uncommitted tail, so the user no
+///     longer sees mid-session "rewrite the whole transcript" jumps when the model changes its
+///     mind about earlier words
 actor WhisperKitBackend: WhisperEngine {
     private var modelName: String
     private let partialIntervalNanos: UInt64
@@ -29,6 +36,26 @@ actor WhisperKitBackend: WhisperEngine {
     private var samples: [Float] = []
     private var continuation: AsyncStream<TranscriptUpdate>.Continuation?
     private var partialTask: Task<Void, Never>?
+
+    /// Locked text from segments that ended early enough to be considered final.
+    /// Their audio has been dropped from `samples`, so partials only ever
+    /// re-transcribe the remaining tail. Reset on `startStream` and consumed by
+    /// `finishStream`.
+    private var committedText: String = ""
+
+    /// Audio is captured at 16 kHz mono Float32 by `AudioCaptureEngine`.
+    private static let sampleRateHz: TimeInterval = 16_000
+
+    /// Once the buffer holds more than this much audio, segments older than
+    /// `commitTailWindowSec` get committed. Below this threshold we keep
+    /// everything live (no point committing on a tiny buffer).
+    private static let commitMinBufferSec: TimeInterval = 6.0
+
+    /// Trailing window of audio that stays "live" — Whisper can still revise
+    /// these segments on subsequent partials. 2 s is enough to absorb the model's
+    /// typical revisions (it usually only reconsiders the last word or two as
+    /// more context arrives) without making the live-typing feel jumpy.
+    private static let commitTailWindowSec: TimeInterval = 2.0
 
     init(
         modelName: String = "openai_whisper-small.en",
@@ -99,6 +126,7 @@ actor WhisperKitBackend: WhisperEngine {
         partialTask?.cancel()
         partialTask = nil
         samples.removeAll(keepingCapacity: true)
+        committedText = ""
 
         let (stream, cont) = AsyncStream<TranscriptUpdate>.makeStream()
         continuation = cont
@@ -124,30 +152,38 @@ actor WhisperKitBackend: WhisperEngine {
 
         guard let pipe else { throw WhisperBackendError.notWarmedUp }
 
-        let final = samples
+        let tail = samples
         samples.removeAll(keepingCapacity: true)
+        let priorCommitted = committedText
+        committedText = ""
 
-        guard !final.isEmpty else {
-            continuation?.yield(TranscriptUpdate(text: "", isFinal: true))
+        // Empty tail: whatever was committed during streaming IS the full text.
+        guard !tail.isEmpty else {
+            // CRITICAL: do NOT yield the final via `continuation`. The
+            // streamConsumer in AppCoordinator iterates this AsyncStream and
+            // would race commitFinalText on `typingQueue` — its typeDiff path
+            // uses pasteWithoutRestore (clipboard ⌘V) which races the
+            // clipboard restore in finalizeSession. commitFinalText receives
+            // the return value here and routes it through `typeUnicode`
+            // instead. Just close the stream so the consumer's for-await exits.
             continuation?.finish()
             continuation = nil
-            return ""
+            return priorCommitted
         }
 
-        let text: String
+        let tailText: String
         do {
-            let results = try await pipe.transcribe(audioArray: final)
-            text = Self.combine(results: results)
+            let results = try await pipe.transcribe(audioArray: tail)
+            tailText = Self.combine(results: results)
         } catch {
             continuation?.finish()
             continuation = nil
             throw error
         }
 
-        continuation?.yield(TranscriptUpdate(text: text, isFinal: true))
         continuation?.finish()
         continuation = nil
-        return text
+        return Self.joinSpaceAware(priorCommitted, tailText)
     }
 
     private func emitPartial() async {
@@ -156,8 +192,51 @@ actor WhisperKitBackend: WhisperEngine {
         let snapshot = samples
         do {
             let results = try await pipe.transcribe(audioArray: snapshot)
-            let text = Self.combine(results: results)
-            continuation?.yield(TranscriptUpdate(text: text, isFinal: false))
+            let allSegments = results.flatMap { $0.segments }
+
+            // Decide which segments are committable — old enough that Whisper
+            // shouldn't be reconsidering them. We only commit when the buffer
+            // is meaningfully long (avoids over-committing tiny early
+            // utterances) and only segments that fully ended before the
+            // trailing live window.
+            let bufferDurationSec = TimeInterval(snapshot.count) / Self.sampleRateHz
+            var newCommittedSegs: [TranscriptionSegment] = []
+            var stillLiveSegs: [TranscriptionSegment] = []
+            if bufferDurationSec >= Self.commitMinBufferSec {
+                let cutoff = bufferDurationSec - Self.commitTailWindowSec
+                var crossedTail = false
+                for seg in allSegments {
+                    if !crossedTail && Double(seg.end) < cutoff {
+                        newCommittedSegs.append(seg)
+                    } else {
+                        crossedTail = true
+                        stillLiveSegs.append(seg)
+                    }
+                }
+            } else {
+                stillLiveSegs = allSegments
+            }
+
+            // Commit: append the newly-committed segment text and drop the
+            // matching audio from the front of `samples`. Note that `samples`
+            // may have grown during the awaited transcribe (audio capture is
+            // still appending) — we drop based on the snapshot's commit point,
+            // which is still a valid prefix of the current array because we
+            // only ever append at the tail.
+            if let lastCommitted = newCommittedSegs.last {
+                let committedSampleCount = Int(Double(lastCommitted.end) * Self.sampleRateHz)
+                if committedSampleCount > 0 && committedSampleCount <= samples.count {
+                    samples.removeFirst(committedSampleCount)
+                }
+                let newText = Self.combineSegments(newCommittedSegs)
+                if !newText.isEmpty {
+                    committedText = Self.joinSpaceAware(committedText, newText)
+                }
+            }
+
+            let liveText = Self.combineSegments(stillLiveSegs)
+            let displayed = Self.joinSpaceAware(committedText, liveText)
+            continuation?.yield(TranscriptUpdate(text: displayed, isFinal: false))
         } catch {
             // Best-effort; will retry on next tick or be superseded by the final pass.
         }
@@ -168,5 +247,26 @@ actor WhisperKitBackend: WhisperEngine {
             .map { $0.text }
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Join Whisper segment texts into a single normalised string. Each
+    /// segment's text is trimmed independently before joining so we don't
+    /// pile up double-spaces from segments that have leading/trailing
+    /// whitespace.
+    private static func combineSegments(_ segs: [TranscriptionSegment]) -> String {
+        segs
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// Concatenate two text fragments with exactly one space between them.
+    /// Used to glue committedText onto live partials and to glue committed
+    /// onto the final tail in `finishStream` — handles all the empty-string
+    /// edge cases without producing leading or trailing whitespace.
+    private static func joinSpaceAware(_ lhs: String, _ rhs: String) -> String {
+        if lhs.isEmpty { return rhs }
+        if rhs.isEmpty { return lhs }
+        return lhs + " " + rhs
     }
 }
