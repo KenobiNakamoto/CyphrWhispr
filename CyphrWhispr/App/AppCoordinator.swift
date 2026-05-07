@@ -338,9 +338,21 @@ final class AppCoordinator {
     }
 
     /// Brings the typed text in the user's field to match `target` by sending
-    /// the smallest possible backspace+paste sequence. Must be called on
-    /// `typingQueue`.
-    private func typeDiff(target: String) {
+    /// the smallest possible backspace + paste/keystroke sequence. Must be
+    /// called on `typingQueue`.
+    ///
+    /// `committingFinal: true` switches the suffix-write path from clipboard ⌘V
+    /// to direct Unicode keystrokes via `injector.typeUnicode(_:)`. This
+    /// matters at session end: the partial-transcript path uses `pasteWithoutRestore`
+    /// for speed, but a clipboard ⌘V is racy with the subsequent
+    /// clipboard-restore in `finalizeSession()` — slow apps can read the
+    /// (already-restored) old clipboard and paste THAT instead of the
+    /// transcription. Direct Unicode keystrokes carry the text in the event
+    /// payload itself, eliminating the race entirely. We accept the small
+    /// per-character cost (~8ms × delta-length) because the final commit's
+    /// delta is typically tiny — last partial → final usually differs by
+    /// punctuation or a single revised word.
+    private func typeDiff(target: String, committingFinal: Bool = false) {
         guard target != typedSoFar else { return }
 
         let commonPrefix = typedSoFar.commonPrefix(with: target)
@@ -352,7 +364,11 @@ final class AppCoordinator {
                 try injector.sendBackspaces(backspaceCount)
             }
             if !suffix.isEmpty {
-                try injector.pasteWithoutRestore(suffix)
+                if committingFinal {
+                    try injector.typeUnicode(suffix)
+                } else {
+                    try injector.pasteWithoutRestore(suffix)
+                }
             }
             typedSoFar = target
         } catch let error as PasteInjectionError {
@@ -374,7 +390,10 @@ final class AppCoordinator {
         let cleaned = TranscriptSanitizer.clean(text)
         typingQueue.async { [weak self] in
             guard let self else { return }
-            self.typeDiff(target: cleaned)
+            // committingFinal: true → final delta is keystroke-typed, not
+            // ⌘V-pasted, so the subsequent clipboard restore in
+            // finalizeSession() can't race with a still-pending paste event.
+            self.typeDiff(target: cleaned, committingFinal: true)
             self.finalizeSession()
         }
 
@@ -384,14 +403,16 @@ final class AppCoordinator {
     /// Restore the user's original clipboard, drop the typing-state, and bounce
     /// back to idle. Called from `typingQueue`.
     ///
-    /// The sleep before restore is critical: the final ⌘V CGEvent has been
-    /// posted to the system event queue but the receiving app hasn't necessarily
-    /// consumed it yet. If we restore the clipboard too soon, the app's paste
-    /// reads the (just-restored) old content and pastes that on top of the
-    /// transcription. 200 ms is conservative — still imperceptible to the user
-    /// but enough for even sluggish Electron apps to read the pasteboard.
+    /// The sleep before restore is critical: even though the FINAL commit now
+    /// goes through `typeUnicode` (no clipboard, no race there), the LAST
+    /// PARTIAL of the streaming session was still a clipboard ⌘V — and the
+    /// receiving app may not have consumed that paste event yet. Restore too
+    /// early and slow apps end up pasting the just-restored old clipboard on
+    /// top of the user's transcription. 500 ms covers Electron-class apps
+    /// under load with comfortable margin and is still imperceptible at
+    /// human-reaction-time scale.
     private func finalizeSession() {
-        usleep(200_000)
+        usleep(500_000)
         sessionClipboard?.restore()
         sessionClipboard = nil
         typedSoFar = ""
@@ -403,14 +424,21 @@ final class AppCoordinator {
         }
     }
 
-    /// Sync clipboard restoration for error paths. Called from main; hops to
-    /// the typing queue so we don't trip over an in-flight typeDiff.
+    /// Sync clipboard restoration for error / cancellation paths (model switch
+    /// mid-streaming, mic failure, mid-spawn release). Called from main; hops
+    /// to the typing queue so we don't trip over an in-flight typeDiff.
+    ///
+    /// Same race as `finalizeSession`: any clipboard ⌘V we issued during a
+    /// just-cancelled streaming session may still be pending in the system
+    /// event queue. The sleep ensures it's been consumed before we overwrite
+    /// the clipboard with the user's original content.
     private func endSession(restoreClipboard: Bool) {
         streamConsumer?.cancel()
         streamConsumer = nil
         pill.hide()
         if restoreClipboard {
             typingQueue.async { [weak self] in
+                usleep(300_000)
                 self?.sessionClipboard?.restore()
                 self?.sessionClipboard = nil
                 self?.typedSoFar = ""

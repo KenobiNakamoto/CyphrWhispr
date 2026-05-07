@@ -86,6 +86,57 @@ struct ClipboardPasteInjector {
         usleep(20_000)
     }
 
+    /// Type `text` directly via synthetic Unicode keystrokes — does NOT touch
+    /// the clipboard. Each Unicode scalar becomes a single keyDown/keyUp pair
+    /// carrying the scalar as its `keyboardSetUnicodeString` payload, so the
+    /// receiving app gets the literal text and there's no race between a
+    /// posted ⌘V and a clipboard restore.
+    ///
+    /// Use this for the FINAL commit at session end, where the cost of an
+    /// async-paste race (wrong text pasted) is highest. Live partials still
+    /// use `pasteWithoutRestore` because clipboard ⌘V is faster for long
+    /// suffixes during streaming, and a partial that lands in the wrong order
+    /// gets superseded by the next partial anyway — but the final commit has
+    /// no follow-up, so it must be ironclad.
+    ///
+    /// Surrogate pairs (non-BMP characters like emoji) are kept inside one
+    /// event by iterating per-scalar and posting each scalar's full UTF-16
+    /// representation (1 or 2 UInt16 units) as one event payload.
+    ///
+    /// As with `sendBackspaces`, we force `event.flags = []` so the user
+    /// holding a modifier-bearing hotkey (e.g. ⌃⌘Space) doesn't poison the
+    /// synthesized characters with stray modifiers.
+    func typeUnicode(_ text: String) throws {
+        guard !text.isEmpty else { return }
+        guard Self.ensureAccessibilityTrusted(prompt: false) else {
+            throw PasteInjectionError.accessibilityNotTrusted
+        }
+        let source = CGEventSource(stateID: .hidSystemState)
+
+        for scalar in text.unicodeScalars {
+            // Each scalar maps to 1 or 2 UTF-16 code units. Send both inside
+            // a single keyDown/keyUp pair so surrogate pairs aren't split.
+            let utf16: [UniChar] = Array(String(scalar).utf16)
+
+            guard
+                let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+            else {
+                throw PasteInjectionError.keyEventCreationFailed
+            }
+            down.flags = []
+            up.flags = []
+            utf16.withUnsafeBufferPointer { buf in
+                guard let base = buf.baseAddress else { return }
+                down.keyboardSetUnicodeString(stringLength: buf.count, unicodeString: base)
+                up.keyboardSetUnicodeString(stringLength: buf.count, unicodeString: base)
+            }
+            down.post(tap: .cgAnnotatedSessionEventTap)
+            up.post(tap: .cgAnnotatedSessionEventTap)
+            usleep(interKeyDelay)
+        }
+    }
+
     /// Send `count` delete-back keystrokes to remove text we previously typed.
     /// Used during live typing to revise prior partial transcripts in place.
     ///
