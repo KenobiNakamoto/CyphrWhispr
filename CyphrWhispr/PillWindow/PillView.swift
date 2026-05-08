@@ -174,9 +174,16 @@ struct PillView: View {
 
     var body: some View {
         Group {
-            if case .spawning(let progress) = viewModel.phase {
+            switch viewModel.phase {
+            case .spawning(let progress):
                 spawnBody(progress: progress)
-            } else {
+            case .installSpawning(let progress):
+                installSpawnBody(progress: progress)
+            case .installCompiling(let fraction):
+                installCompileBody(rimFraction: fraction)
+            case .installOutro(let progress):
+                installOutroBody(progress: progress)
+            case .idle, .armed, .listening, .processing:
                 normalBody
             }
         }
@@ -300,6 +307,286 @@ struct PillView: View {
                           accentSecondary: prefs.accentSecondary)
                 .opacity(s.rimOpacity)
         )
+    }
+}
+
+// MARK: - Install animation bodies
+
+extension PillView {
+    /// First-install intro: figures spawn at the seed-pill geometry (63 × 48),
+    /// pill compresses to 60 during anticipation, then symmetrically expands to
+    /// the full 170 with figures pinned to walls. Label fades in during the
+    /// final hold phase. Pure render — all motion math comes from
+    /// `InstallTimeline.introState(at:)`.
+    @ViewBuilder
+    fileprivate func installSpawnBody(progress: Double) -> some View {
+        let s = InstallTimeline.introState(at: progress)
+        let shape = Capsule(style: .continuous)
+
+        ZStack(alignment: .leading) {
+            shape
+                .fill(Color.black)
+                .frame(width: s.pillWidth, height: Self.pillHeight)
+                .shadow(color: .black.opacity(0.50 * s.figureOpacity), radius: 16, x: 0, y: 8)
+                .shadow(color: .black.opacity(0.20 * s.figureOpacity), radius: 3, x: 0, y: 1)
+
+            DownTriangle()
+                .fill(Color.white)
+                .frame(width: 18, height: 16)
+                .opacity(s.figureOpacity)
+                .scaleEffect(s.figureScale)
+                .offset(x: s.triangleX, y: (Self.pillHeight - 16) / 2)
+
+            Circle()
+                .fill(Color.white)
+                .frame(width: 17, height: 17)
+                .opacity(s.figureOpacity)
+                .scaleEffect(s.figureScale)
+                .offset(x: s.dotX, y: (Self.pillHeight - 17) / 2)
+
+            // Compiling label — fades in only during the post-push hold phase.
+            // Frame matches the FULL pill width so the text remains centred
+            // even though the capsule itself is animating its width earlier
+            // in the timeline. Rendered behind a guard so the label doesn't
+            // briefly pop in for one frame at the boundary between push and
+            // hold (labelOpacity == 0 there) — wasted work AND a flicker.
+            if s.labelOpacity > 0 {
+                Text("compiling")
+                    .font(.system(size: 12, weight: .regular))
+                    .tracking(0.5)
+                    .foregroundColor(.white.opacity(0.85 * s.labelOpacity))
+                    .frame(width: Self.pillWidth, height: Self.pillHeight)
+                    .offset(y: s.labelOffsetY)
+            }
+        }
+        .frame(width: Self.pillWidth, height: Self.pillHeight, alignment: .leading)
+    }
+
+    /// Compile-progress display. Pill is static at full width; figures sit at
+    /// the install-hold positions (triangle at 12, circle at 141); the
+    /// determinate rim sweep is the only animated element. The "compiling"
+    /// label breathes between 85 % and 100 % opacity on a 3 s sine cycle so
+    /// the user can tell at a glance the app hasn't frozen.
+    @ViewBuilder
+    fileprivate func installCompileBody(rimFraction: Double) -> some View {
+        let shape = Capsule(style: .continuous)
+
+        ZStack(alignment: .leading) {
+            shape
+                .fill(Color.black)
+                .frame(width: Self.pillWidth, height: Self.pillHeight)
+                .shadow(color: .black.opacity(0.50), radius: 16, x: 0, y: 8)
+                .shadow(color: .black.opacity(0.20), radius: 3, x: 0, y: 1)
+
+            DownTriangle()
+                .fill(Color.white)
+                .frame(width: 18, height: 16)
+                .offset(x: InstallTimeline.triPinnedX, y: (Self.pillHeight - 16) / 2)
+
+            Circle()
+                .fill(Color.white)
+                .frame(width: 17, height: 17)
+                .offset(x: InstallTimeline.dotPushEndX, y: (Self.pillHeight - 17) / 2)
+
+            // Breathing "compiling" label, centred within the pill bounds.
+            // TimelineView gives us a 60 Hz redraw clock; the sine drives the
+            // opacity oscillation. `paused: false` is fine here — the entire
+            // view is conditionally rendered by PillView.body, so this clock
+            // dies the moment the phase leaves `.installCompiling`.
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { context in
+                let phase = context.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: 3.0) / 3.0
+                let breath = 0.85 + 0.15 * (sin(phase * 2 * .pi) * 0.5 + 0.5)
+                Text("compiling")
+                    .font(.system(size: 12, weight: .regular))
+                    .tracking(0.5)
+                    .foregroundColor(.white.opacity(breath))
+                    .frame(width: Self.pillWidth, height: Self.pillHeight)
+            }
+        }
+        .frame(width: Self.pillWidth, height: Self.pillHeight, alignment: .leading)
+        .overlay(
+            ProgressRim(fraction: rimFraction,
+                        accent: prefs.accent,
+                        accentSecondary: prefs.accentSecondary)
+        )
+    }
+
+    /// Outro: rim fades out, label fades down + drops 4 pt, circle slides
+    /// 141 → 47 with the triangle following 12 → 22, bars cascade in
+    /// right-to-left, then the steady-state comet rim ignites. End-frame is
+    /// pixel-identical to the canonical idle pill (verified by the same
+    /// `barIdleColumns` / `barIdleHeights` constants the idle layout uses).
+    @ViewBuilder
+    fileprivate func installOutroBody(progress: Double) -> some View {
+        let s = InstallTimeline.outroState(at: progress)
+        let shape = Capsule(style: .continuous)
+
+        ZStack(alignment: .leading) {
+            shape
+                .fill(Color.black)
+                .frame(width: Self.pillWidth, height: Self.pillHeight)
+                .shadow(color: .black.opacity(0.50), radius: 16, x: 0, y: 8)
+                .shadow(color: .black.opacity(0.20), radius: 3, x: 0, y: 1)
+
+            // Triangle slides 12 → 22 over the circle-traverse window, in
+            // sync with the circle. Read the value from the timeline rather
+            // than hardcoding 22 so the slide reads as smooth.
+            DownTriangle()
+                .fill(Color.white)
+                .frame(width: 18, height: 16)
+                .offset(x: s.triangleX, y: (Self.pillHeight - 16) / 2)
+
+            Circle()
+                .fill(Color.white)
+                .frame(width: 17, height: 17)
+                .offset(x: s.dotX, y: (Self.pillHeight - 17) / 2)
+
+            // Bars cascade in right-to-left, with a small upward fade-in
+            // translate (3 → 0). Heights and X-columns are the same idle
+            // constants used by the resting waveform — guarantees the
+            // outro end-frame matches the idle frame exactly.
+            ForEach(0..<7, id: \.self) { i in
+                let h = InstallTimeline.barIdleHeights[i]
+                Capsule()
+                    .fill(Self.barGradient)
+                    .frame(width: InstallTimeline.barWidth, height: h)
+                    .opacity(s.barOpacities[i])
+                    .offset(x: InstallTimeline.barIdleColumns[i],
+                            y: (Self.pillHeight - h) / 2 + s.barOffsetsY[i])
+            }
+
+            // Label fading out + drifting downward. Same guard as the intro:
+            // skip the Text entirely once labelOpacity hits 0 to avoid a
+            // wasted view in the cascade phase.
+            if s.labelOpacity > 0 {
+                Text("compiling")
+                    .font(.system(size: 12, weight: .regular))
+                    .tracking(0.5)
+                    .foregroundColor(.white.opacity(0.85 * s.labelOpacity))
+                    .frame(width: Self.pillWidth, height: Self.pillHeight)
+                    .offset(y: s.labelOffsetY)
+            }
+        }
+        .frame(width: Self.pillWidth, height: Self.pillHeight, alignment: .leading)
+        // Determinate progress rim, fading out as the outro begins. We render
+        // it at fraction = 1.0 (full sweep) and just modulate opacity — the
+        // user already saw it complete its sweep at the end of the compile
+        // phase, so the outro simply dissolves it.
+        .overlay(
+            ProgressRim(fraction: 1.0,
+                        accent: prefs.accent,
+                        accentSecondary: prefs.accentSecondary)
+                .opacity(s.rimOpacity)
+        )
+        // Steady-state comet rim, igniting AFTER the progress rim has
+        // fully faded. Brightness flash is a gaussian peak at p ≈ 0.4.
+        .overlay(
+            RimHighlights(visible: s.cometOpacity > 0,
+                          animating: true,
+                          intensity: 0.85 * s.cometBrightness,
+                          level: 0,
+                          accent: prefs.accent,
+                          accentSecondary: prefs.accentSecondary)
+                .opacity(s.cometOpacity)
+        )
+    }
+
+    /// Vertical white → silver → graphite gradient used by both the cascading
+    /// outro bars and the idle waveform. Defined once as a static so the two
+    /// render paths stay visually identical pixel-for-pixel.
+    fileprivate static let barGradient = LinearGradient(
+        stops: [
+            .init(color: .white,                                              location: 0.0),
+            .init(color: Color(red: 0.855, green: 0.855, blue: 0.886),        location: 0.5),
+            .init(color: Color(red: 0.537, green: 0.541, blue: 0.580),        location: 1.0)
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+    )
+}
+
+// MARK: - Progress rim (determinate sweep)
+
+/// Capsule outline drawn starting at top-centre and going clockwise, trimmed
+/// to `fraction` of the perimeter. Two stacked strokes: a 5 pt blurred halo
+/// + a 2.5 pt crisp core with a leading-edge gradient. Implemented in a
+/// `Canvas` so we control the exact path geometry (SwiftUI's `Capsule().trim`
+/// doesn't guarantee where the trim starts).
+///
+/// `fraction == 1.0` draws the full perimeter — the outro relies on this
+/// when it fades a completed rim out.
+private struct ProgressRim: View {
+    let fraction: Double
+    let accent: Color
+    let accentSecondary: Color
+
+    var body: some View {
+        Canvas { ctx, size in
+            // Build the path fresh every frame — the `Path` is cheap, and
+            // building inside the Canvas closure means it's always sized to
+            // the current bounds (no stale geometry on resize / preview swap).
+            let path = Self.capsulePath(in: CGRect(origin: .zero, size: size))
+            let safeFraction = max(0.0001, min(1.0, fraction))
+            let trimmed = path.trimmedPath(from: 0, to: safeFraction)
+
+            // 1. Blurred halo — bleeds outside the capsule edge for the soft
+            //    accent-coloured glow.
+            ctx.opacity = 0.55
+            ctx.addFilter(.blur(radius: 3))
+            ctx.stroke(trimmed,
+                       with: .color(accent.opacity(0.35)),
+                       lineWidth: 5)
+
+            // 2. Crisp core — leading edge bright (white-tipped), trailing
+            //    end fades into the cooler accent-secondary so the sweep
+            //    reads as a comet-of-light rather than a hard moving stripe.
+            ctx.opacity = 1
+            ctx.addFilter(.blur(radius: 0))
+            ctx.stroke(trimmed,
+                       with: .linearGradient(
+                           Gradient(stops: [
+                               .init(color: accentSecondary.opacity(0.6), location: 0.0),
+                               .init(color: accent,                       location: 0.5),
+                               .init(color: .white.opacity(0.85),         location: 1.0),
+                           ]),
+                           startPoint: .zero,
+                           endPoint: CGPoint(x: size.width, y: size.height)
+                       ),
+                       lineWidth: 2.5)
+        }
+    }
+
+    /// Capsule outline, *starting at top-centre and going clockwise*. Five
+    /// segments: top-half line → right semicircle → bottom-edge line → left
+    /// semicircle → final line back to top centre. The explicit move + line
+    /// to top-centre is what guarantees `trimmedPath(from: 0, ...)` begins at
+    /// 12 o'clock instead of wherever SwiftUI's default capsule trim starts.
+    private static func capsulePath(in rect: CGRect) -> Path {
+        let r = rect.height / 2
+        let mid = rect.width / 2
+
+        var p = Path()
+        p.move(to: CGPoint(x: mid, y: 0))
+        // Top-right edge segment.
+        p.addLine(to: CGPoint(x: rect.maxX - r, y: 0))
+        // Right rounded end (down through 3 o'clock to 6 o'clock).
+        p.addArc(center: CGPoint(x: rect.maxX - r, y: r),
+                 radius: r,
+                 startAngle: .degrees(-90),
+                 endAngle: .degrees(90),
+                 clockwise: false)
+        // Bottom edge.
+        p.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        // Left rounded end (up through 9 o'clock to 12 o'clock).
+        p.addArc(center: CGPoint(x: rect.minX + r, y: r),
+                 radius: r,
+                 startAngle: .degrees(90),
+                 endAngle: .degrees(270),
+                 clockwise: false)
+        // Final line back to top-centre, closing the loop.
+        p.addLine(to: CGPoint(x: mid, y: 0))
+        return p
     }
 }
 
@@ -429,6 +716,63 @@ private struct DownTriangle: Shape {
 #Preview("Spawning - traverse") {
     let vm = PillViewModel()
     vm.phase = .spawning(progress: 0.70)
+    return PillView(viewModel: vm)
+        .frame(width: 260, height: 120)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+}
+
+// MARK: - Install animation previews
+//
+// Three frames of the install timeline at instructive progress points.
+// Pick a value in the *middle* of each phase rather than the boundaries so
+// the visual state is unambiguous and you don't see a frame caught between
+// transitions in the static preview.
+
+#Preview("Install - intro push (mid)") {
+    // 0.6 sits inside the push phase (0.425 → 0.850) — pill is partway
+    // expanded, figures are mid-traverse to extremes, no label yet.
+    let vm = PillViewModel()
+    vm.phase = .installSpawning(progress: 0.60)
+    return PillView(viewModel: vm)
+        .frame(width: 260, height: 120)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+}
+
+#Preview("Install - intro hold (label fading in)") {
+    // 0.93 sits inside the hold phase (0.850 → 1.0) — pill is full width,
+    // figures at extremes, "compiling" label fading in.
+    let vm = PillViewModel()
+    vm.phase = .installSpawning(progress: 0.93)
+    return PillView(viewModel: vm)
+        .frame(width: 260, height: 120)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+}
+
+#Preview("Install - compiling 67%") {
+    // Mid-sweep: rim has covered roughly two thirds of the capsule
+    // perimeter, breathing label is centred, figures static.
+    let vm = PillViewModel()
+    vm.phase = .installCompiling(progress: 0.67)
+    return PillView(viewModel: vm)
+        .frame(width: 260, height: 120)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+}
+
+#Preview("Install - outro mid (bars cascading)") {
+    // 0.45 — circle is halfway through its 141 → 47 traverse, bars are
+    // mid-cascade right-to-left, rim opacity dropping, label nearly gone.
+    let vm = PillViewModel()
+    vm.phase = .installOutro(progress: 0.45)
+    return PillView(viewModel: vm)
+        .frame(width: 260, height: 120)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+}
+
+#Preview("Install - outro late (comet igniting)") {
+    // 0.85 — past the comet-ignite threshold (0.654). Steady-state rim is
+    // visible, brightness flash near peak, end-frame approaching.
+    let vm = PillViewModel()
+    vm.phase = .installOutro(progress: 0.85)
     return PillView(viewModel: vm)
         .frame(width: 260, height: 120)
         .background(Color(red: 0.05, green: 0.05, blue: 0.07))
