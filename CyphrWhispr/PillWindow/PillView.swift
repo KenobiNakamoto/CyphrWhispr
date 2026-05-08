@@ -777,3 +777,74 @@ private struct DownTriangle: Shape {
         .frame(width: 260, height: 120)
         .background(Color(red: 0.05, green: 0.05, blue: 0.07))
 }
+
+// MARK: - Self-driving demo preview
+//
+// The static install previews above are useful for inspecting one specific
+// frame, but they freeze the timeline — you can't actually watch the
+// choreography play out. This wrapper drives the full intro → compile →
+// outro loop using the same `PillViewModel` API the production
+// `AppCoordinator` uses, so what you see in Xcode's Live Preview mode is
+// exactly what ships at runtime.
+//
+// To use: open the "Install - full sequence (Live)" preview in Xcode's
+// canvas and click the small ▶ play button at the bottom-right of the
+// preview. The pill will loop the install animation indefinitely.
+
+private struct InstallSequenceDemo: View {
+    /// `@StateObject` (not `@ObservedObject`) so the view model survives
+    /// preview re-renders. Without this the loop restarts whenever Xcode
+    /// re-evaluates the body, which it does aggressively in live mode.
+    @StateObject private var vm = PillViewModel()
+
+    var body: some View {
+        PillView(viewModel: vm)
+            .task {
+                // Continuously loop the install choreography. Each iteration:
+                //   1. Idle rest beat (1.5s) — gives the eye somewhere to
+                //      settle before the next cycle starts. Without this the
+                //      restart reads as a glitch.
+                //   2. Intro (2s) — figure spawn → push → label-in.
+                //   3. Compile (8s simulated) — rim sweeps 0 → 1. Production
+                //      uses real Core ML compile progress, typically 30-90s.
+                //      8s here keeps the demo loop watchable.
+                //   4. Outro (1.3s) — rim fade, circle traverse, bar cascade,
+                //      comet ignite.
+                //   5. Brief breath at .armed (1.5s) before restart.
+                while !Task.isCancelled {
+                    vm.phase = .idle
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    if Task.isCancelled { break }
+
+                    await vm.playInstallSpawn(duration: 2.0)
+                    if Task.isCancelled { break }
+
+                    // Drive rim progress 0 → 1 over 8s at ~60Hz. Step-by-step
+                    // mirrors how AppCoordinator will drive setInstallProgress
+                    // from the actual warm-up time.
+                    let sweepStart = Date()
+                    let sweepDur: TimeInterval = 8.0
+                    while !Task.isCancelled {
+                        let p = min(1.0, Date().timeIntervalSince(sweepStart) / sweepDur)
+                        vm.setInstallProgress(p)
+                        if p >= 1.0 { break }
+                        try? await Task.sleep(nanoseconds: 16_000_000) // ~60Hz
+                    }
+                    if Task.isCancelled { break }
+
+                    await vm.playInstallOutro(duration: 1.3)
+                    if Task.isCancelled { break }
+
+                    // Final rest in .armed (with the comet rim orbiting at
+                    // its idle 4.4s period) before restarting.
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                }
+            }
+    }
+}
+
+#Preview("Install - full sequence (Live)") {
+    InstallSequenceDemo()
+        .frame(width: 260, height: 120)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+}
