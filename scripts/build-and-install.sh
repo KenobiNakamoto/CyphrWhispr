@@ -22,6 +22,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CyphrWhispr"
 INSTALL_PATH="/Applications/${APP_NAME}.app"
+# Force xcodebuild to output into a repo-local DerivedData. Without this,
+# xcodebuild picks a project-hashed folder under ~/Library/Developer/
+# Xcode/DerivedData/ where the hash can change subtly across runs (cwd
+# differences, Xcode previews touching files), and `ls -td` would
+# sometimes pick a stale .app from a *different* DerivedData folder
+# than the one xcodebuild actually wrote to. Repo-local kills that
+# entire class of bug — and lives inside .gitignore'd build/.
+DERIVED_DATA_PATH="${REPO_ROOT}/build/derived"
 
 # --- Argument parsing ---
 CONFIGURATION="Debug"
@@ -64,20 +72,22 @@ if command -v xcodegen >/dev/null 2>&1 && [ -f "${REPO_ROOT}/project.yml" ]; the
 fi
 
 # --- Build ---
+# -derivedDataPath pins output to our repo-local folder, so we know
+# exactly where to copy from afterwards.
 cd "${REPO_ROOT}"
 xcodebuild \
     -project "${APP_NAME}.xcodeproj" \
     -scheme "${APP_NAME}" \
     -configuration "${CONFIGURATION}" \
     -destination 'platform=macOS' \
+    -derivedDataPath "${DERIVED_DATA_PATH}" \
     build \
     2>&1 | tail -20
 
 # --- Locate the freshly-built .app ---
-# DerivedData paths include a hash; -td orders by mtime so head -1 is freshest.
-BUILT_APP=$(ls -td ~/Library/Developer/Xcode/DerivedData/${APP_NAME}-*/Build/Products/${CONFIGURATION}/${APP_NAME}.app 2>/dev/null | head -1)
+BUILT_APP="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/${APP_NAME}.app"
 if [ ! -d "${BUILT_APP}" ]; then
-    echo "ERROR: Built app not found in DerivedData." >&2
+    echo "ERROR: Built app not found at expected path: ${BUILT_APP}" >&2
     exit 1
 fi
 echo "    Built: ${BUILT_APP}"
