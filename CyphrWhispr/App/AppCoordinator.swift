@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import QuartzCore  // CACurrentMediaTime() — monotonic clock for the install rim timer
 
 enum AppState: Equatable {
     case idle
@@ -51,6 +52,40 @@ final class AppCoordinator {
     /// `whisper.append(...)` the moment streaming begins.
     private var spawnBuffer: [Float] = []
 
+    // MARK: - Install-path state
+    //
+    // The install animation only runs when the user hits the hotkey while
+    // the model is still warming up (i.e. `state == .loadingModel` at press
+    // time). Distinguishing this from the cinematic spawn flow needs a
+    // small parallel state machine — different completion gating, different
+    // pill entry point, different rim driver.
+    //
+    // The pill goes through .installSpawning → .installCompiling →
+    // .installOutro → .armed in sequence. The coordinator's `state` stays
+    // at `.spawning` throughout (audio is buffering, no streaming yet) and
+    // only advances to `.streaming` when `installOutroDone` flips.
+
+    /// True when the current hotkey session entered via the install path.
+    /// Resets to false at session end. Drives the gating in
+    /// `maybeBeginStreaming()` and the cleanup in error/cancel paths.
+    private var installPathActive: Bool = false
+    /// Set when `pill.onInstallOutroComplete` fires. Sole gate that
+    /// promotes the install path from `.spawning` → `.streaming`.
+    private var installOutroDone: Bool = false
+    /// Drives `pill.setInstallProgress(_:)` from the install intro
+    /// completion until either (a) warm-up resolves and we snap to 1.0
+    /// and play the outro, or (b) 30 s passes and the rim sits visually
+    /// full while we keep waiting for warm-up.
+    private var installRimTask: Task<Void, Never>?
+
+    /// Wall-clock target for a full rim sweep when we don't know how
+    /// long the model will actually take. 30 s comfortably covers the
+    /// typical 30–60 s Apple Silicon Whisper model compile while staying
+    /// short enough that the user doesn't sit through "blank rim" stretches
+    /// on slow disks. If warm-up resolves earlier we snap to 1.0; if it
+    /// takes longer, the rim holds at 1.0.
+    private static let installRimSweepDuration: TimeInterval = 30.0
+
     init(prefs: PreferencesStore = .shared) {
         self.prefs = prefs
         self.whisper = WhisperKitBackend(modelName: prefs.activeModelID)
@@ -93,6 +128,27 @@ final class AppCoordinator {
         pill.onSpawnComplete = { [weak self] in
             guard let self else { return }
             self.spawnAnimationDone = true
+            self.maybeBeginStreaming()
+        }
+
+        // Install path: intro complete → kick off the rim-progress driver.
+        // Note: installRimTask is a fallback timer — the moment
+        // `whisper.warmUp()` actually resolves we cancel the timer, snap
+        // the rim to 1.0, and trigger the outro. The timer just gives the
+        // user *visible* progress in case the warm-up takes its full
+        // 30-90s; without it the rim would sit at 0 looking broken.
+        pill.onInstallIntroComplete = { [weak self] in
+            self?.startInstallRimSweep()
+        }
+
+        // Install path: outro complete → start streaming. We only honour
+        // this when we're still in `.spawning` (early hotkey release would
+        // have already moved us past .spawning, in which case the outro
+        // we triggered before the user gave up should just no-op here).
+        pill.onInstallOutroComplete = { [weak self] in
+            guard let self else { return }
+            guard self.installPathActive else { return }
+            self.installOutroDone = true
             self.maybeBeginStreaming()
         }
 
@@ -148,10 +204,18 @@ final class AppCoordinator {
             // clipboard. The new model will pre-warm in the background as
             // usual; the pill replay flag was already armed by
             // PreferencesStore.activeModelDidChange.
+            //
+            // Same install-path cleanup as the hotkey-release branch — kill
+            // the rim timer and reset both gating flags so the next session
+            // doesn't inherit stale "outro already done" state.
             whisperWarmAwaiter?.cancel()
             whisperWarmAwaiter = nil
+            installRimTask?.cancel()
+            installRimTask = nil
             spawnAnimationDone = false
             whisperWarmDone = false
+            installOutroDone = false
+            installPathActive = false
             spawnBuffer.removeAll(keepingCapacity: false)
             audio.stop()
             endSession(restoreClipboard: true)
@@ -192,12 +256,24 @@ final class AppCoordinator {
             return
         }
 
-        // Enter spawning state — pill plays the cinematic appearance, audio
-        // capture starts immediately, samples buffer locally instead of
-        // streaming until both the animation completes and whisper is warm.
+        // Choose between cinematic spawn (model already warm or warming
+        // briefly) and the full install animation (model still loading on
+        // a fresh launch). Decision is made once at press time and frozen
+        // for this session via `installPathActive` — flipping mid-session
+        // would leave the pill choreography in a confused state.
+        let useInstallPath = (state == .loadingModel)
+        installPathActive = useInstallPath
+
+        // Enter spawning state — audio capture starts immediately and
+        // samples buffer locally. `state` stays `.spawning` regardless of
+        // path; the pill phase carries the visual distinction.
         state = .spawning
         spawnBuffer.removeAll(keepingCapacity: true)
-        pill.show()
+        if useInstallPath {
+            pill.showInstall()
+        } else {
+            pill.show()
+        }
 
         do {
             try audio.start()
@@ -214,12 +290,13 @@ final class AppCoordinator {
             self.typedSoFar = ""
         }
 
-        // Reset both readiness flags. The pill controller's `onSpawnComplete`
-        // callback (wired up in `start()`) flips `spawnAnimationDone`; the
-        // warm-up Task below flips `whisperWarmDone`. The second one to fire
-        // calls `maybeBeginStreaming()` which actually advances state.
+        // Reset readiness flags for the chosen path. spawnAnimationDone +
+        // whisperWarmDone gate the cinematic path; installOutroDone gates
+        // the install path. We always reset both so cancelled-and-retried
+        // sessions start from a clean slate.
         spawnAnimationDone = false
         whisperWarmDone = false
+        installOutroDone = false
 
         whisperWarmAwaiter?.cancel()
         whisperWarmAwaiter = Task { [weak self] in
@@ -235,20 +312,66 @@ final class AppCoordinator {
             }
             await MainActor.run {
                 self.whisperWarmDone = true
-                self.maybeBeginStreaming()
+                if self.installPathActive {
+                    // Install path: snap the rim to 1.0 (in case the
+                    // 30s timer hasn't reached it yet) and play the outro.
+                    // Streaming starts when the outro callback fires.
+                    self.installRimTask?.cancel()
+                    self.installRimTask = nil
+                    self.pill.setInstallProgress(1.0)
+                    self.pill.playInstallOutro()
+                } else {
+                    // Cinematic path: try to advance state; the spawn
+                    // animation completing is the other half of the gate.
+                    self.maybeBeginStreaming()
+                }
             }
         }
     }
 
-    /// Called from two places — both fire only after the precondition they
-    /// represent has been met:
-    ///   • `pill.onSpawnComplete` callback flips `spawnAnimationDone`
-    ///   • the warm-up Task above flips `whisperWarmDone`
-    /// Whichever arrives second satisfies the guard and advances state to
-    /// `.streaming`. Idempotent — re-entering after `.streaming` is a no-op.
+    /// Drives the rim from 0 → 1 over `installRimSweepDuration` once the
+    /// install intro animation completes. Cancelled and replaced by a snap
+    /// to 1.0 the moment `whisper.warmUp()` actually resolves; if the timer
+    /// reaches the end before warm-up, the rim sits visually full and we
+    /// keep waiting (the outro doesn't fire until warm-up is done).
+    ///
+    /// 60Hz tick — same cadence WaveformView uses for live audio bars,
+    /// chosen because it matches the screen refresh rate on M1+ Macs.
+    private func startInstallRimSweep() {
+        installRimTask?.cancel()
+        installRimTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let start = CACurrentMediaTime()
+            while !Task.isCancelled {
+                let elapsed = CACurrentMediaTime() - start
+                let p = min(1.0, elapsed / Self.installRimSweepDuration)
+                self.pill.setInstallProgress(p)
+                if p >= 1.0 { break }
+                try? await Task.sleep(nanoseconds: 16_000_000) // ~60Hz
+            }
+        }
+    }
+
+    /// Called from up to three places, gated by which path this session
+    /// took. Idempotent — re-entering after `.streaming` is a no-op.
+    ///
+    /// Cinematic spawn path (default):
+    ///   • `pill.onSpawnComplete` flips `spawnAnimationDone`
+    ///   • the warm-up Task flips `whisperWarmDone`
+    ///   • whichever arrives second triggers streaming
+    ///
+    /// Install path (active only when the user pressed during
+    /// `.loadingModel`):
+    ///   • the warm-up Task triggers the outro animation when it resolves
+    ///   • `pill.onInstallOutroComplete` flips `installOutroDone`
+    ///   • that single signal triggers streaming
     private func maybeBeginStreaming() {
         guard state == .spawning else { return }
-        guard spawnAnimationDone && whisperWarmDone else { return }
+        if installPathActive {
+            guard installOutroDone else { return }
+        } else {
+            guard spawnAnimationDone && whisperWarmDone else { return }
+        }
         beginStreaming()
     }
 
@@ -278,14 +401,22 @@ final class AppCoordinator {
     private func handleHotkeyRelease() {
         // Release during .spawning is valid — user gave up before whisper
         // was ready. Cancel cleanly: stop audio, drop the buffer, hide
-        // the pill, restore clipboard.
+        // the pill, restore clipboard. Covers BOTH cinematic spawn and
+        // install paths; the install path adds a rim timer to cancel and
+        // a couple of extra flags to reset.
         if state == .spawning {
             whisperWarmAwaiter?.cancel()
             whisperWarmAwaiter = nil
+            installRimTask?.cancel()
+            installRimTask = nil
             spawnAnimationDone = false
             whisperWarmDone = false
+            installOutroDone = false
+            installPathActive = false
             spawnBuffer.removeAll(keepingCapacity: false)
             audio.stop()
+            // pill.hide() inside endSession calls viewModel.cancelInstall(),
+            // so any in-flight intro/outro on the pill side gets killed too.
             endSession(restoreClipboard: true)
             return
         }
