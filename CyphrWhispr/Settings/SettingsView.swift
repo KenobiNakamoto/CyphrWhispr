@@ -7,6 +7,7 @@ struct SettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
         case shortcut = "Shortcut"
         case models   = "Models"
+        case polish   = "Polish"
         case about    = "About"
         var id: String { rawValue }
     }
@@ -32,6 +33,7 @@ struct SettingsView: View {
                     switch tab {
                     case .shortcut: ShortcutTabView()
                     case .models:   ModelsTabView()
+                    case .polish:   PolishTabView()
                     case .about:    AboutTabView()
                     }
                 }
