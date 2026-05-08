@@ -67,16 +67,36 @@ final class PillWindowController {
     /// fires synchronously inside `show()` so the same code path always works.
     var onSpawnComplete: (() -> Void)?
 
+    /// Fired when the install **intro** animation finishes — i.e. the pill
+    /// has just transitioned from `.installSpawning(...)` to
+    /// `.installCompiling(progress: 0)`. AppCoordinator wires this up to
+    /// start driving rim progress (`setInstallProgress(_:)`) from the actual
+    /// model warm-up state.
+    ///
+    /// Distinct from `onSpawnComplete` because the install path doesn't
+    /// drain audio at this point — audio capture hasn't started yet on a
+    /// fresh-install hotkey press; it begins once the outro completes and
+    /// the pill is in `.armed`.
+    var onInstallIntroComplete: (() -> Void)?
+
+    /// Fired when the install **outro** animation finishes — pill has just
+    /// transitioned to `.armed`. AppCoordinator uses this as the cue to
+    /// start audio capture and streaming, the same way it would after
+    /// `onSpawnComplete` fires for the cinematic spawn path.
+    var onInstallOutroComplete: (() -> Void)?
+
     /// **For tests only.** Production code should never read the view model
     /// directly — go through `setPhase`, `updateLevel`, etc.
     var viewModelForTesting: PillViewModel { viewModel }
 
     func show() {
-        // Defensive: if a previous spawn is still running (rare — show()
-        // is normally paired with hide() by the hotkey lifecycle, but
-        // double-press or other races can hit this), cancel it cleanly
-        // so it doesn't overwrite the .armed phase below.
+        // Defensive: if a previous spawn (cinematic OR install) is still
+        // running, cancel it cleanly so it doesn't overwrite the .armed
+        // phase below. show() is normally paired with hide() by the hotkey
+        // lifecycle, but double-press or other races can hit this — and a
+        // mid-install hotkey release on a different display would too.
         viewModel.cancelSpawn()
+        viewModel.cancelInstall()
 
         let panel = panel ?? makePanel()
         self.panel = panel
@@ -108,12 +128,79 @@ final class PillWindowController {
         }
     }
 
+    /// Install-animation entry point. Called by AppCoordinator when the user
+    /// presses the hotkey while the model is still warming up
+    /// (`state == .loadingModel`). Plays the install intro animation, then
+    /// fires `onInstallIntroComplete` so the coordinator can start driving
+    /// `setInstallProgress(_:)` from the actual warm-up state.
+    ///
+    /// Does NOT consume the `spawnPending` flag — install and spawn are
+    /// distinct entry points. After the install outro completes, the next
+    /// press of the hotkey will play either a cinematic spawn (if pending)
+    /// or instant `.armed`, whichever the spawn-pending machinery dictates.
+    func showInstall() {
+        // Defensive cancels — same rationale as show(): we might be hitting
+        // this during a previous in-flight install (rapid model switch,
+        // recovery from an error path) or a previous cinematic spawn.
+        viewModel.cancelSpawn()
+        viewModel.cancelInstall()
+
+        let panel = panel ?? makePanel()
+        self.panel = panel
+        panel.setFrameOrigin(targetOrigin(for: panel))
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            ctx.allowsImplicitAnimation = true
+            panel.animator().alphaValue = 1
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let completed = await self.viewModel.playInstallSpawn()
+            // playInstallSpawn ends with phase = .installCompiling(progress: 0).
+            // Fire the callback only on uncancelled completion so the
+            // coordinator doesn't start driving progress on a pill that
+            // already moved on (e.g. early hotkey release).
+            if completed {
+                self.onInstallIntroComplete?()
+            }
+        }
+    }
+
+    /// Push a new rim-progress value from the warm-up driver. Caller is
+    /// expected to clamp to `[0, 1]`; the underlying view model also clamps
+    /// defensively. No-op if the pill isn't currently in
+    /// `.installCompiling`, so out-of-band calls (e.g. progress arriving
+    /// after the user already released the hotkey and we ran the outro) are
+    /// silently ignored.
+    func setInstallProgress(_ p: Double) {
+        viewModel.setInstallProgress(p)
+    }
+
+    /// Play the install outro animation (rim fade + label fade + circle
+    /// traverse + bar cascade + comet ignite) and transition to `.armed`.
+    /// Fires `onInstallOutroComplete` on completion. Caller is expected to
+    /// have first set rim progress to 1.0 via `setInstallProgress(1.0)` so
+    /// the rim is visually full when the outro begins fading it out.
+    func playInstallOutro() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let completed = await self.viewModel.playInstallOutro()
+            if completed {
+                self.onInstallOutroComplete?()
+            }
+        }
+    }
+
     /// Spec calls for the pill to scale slightly down (1.0 → 0.97) and fade
     /// out on completion. We do that here on the panel's contentView via a
     /// CALayer transform in addition to fading alpha.
     func hide() {
         guard let panel else { return }
-        viewModel.cancelSpawn()  // safe no-op if no spawn in flight
+        viewModel.cancelSpawn()    // safe no-op if no spawn in flight
+        viewModel.cancelInstall()  // ditto for install intro / outro
         viewModel.phase = .idle
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.22
