@@ -198,6 +198,11 @@ final class FoundationModelsCleaner: TranscriptionCleaner, Sendable {
     static func format(timeout: TimeInterval) -> String {
         // "3s" reads better than "3.0 seconds" in the rejected-reason logs.
         if timeout == floor(timeout) { return "\(Int(timeout))s" }
-        return String(format: "%.1fs", timeout)
+        // printf's %.1f uses banker's rounding (toNearestOrEven), which
+        // surprises tests and users — e.g. 0.25 → "0.2" instead of "0.3".
+        // Pre-round half-away-from-zero so it matches the conventional
+        // "round up at .5" behaviour.
+        let rounded = (timeout * 10).rounded(.toNearestOrAwayFromZero) / 10
+        return String(format: "%.1fs", rounded)
     }
 }
