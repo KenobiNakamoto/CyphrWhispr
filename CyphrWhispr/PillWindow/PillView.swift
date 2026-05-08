@@ -204,7 +204,9 @@ struct PillView: View {
                 .shadow(color: .black.opacity(0.50), radius: 16, x: 0, y: 8)
                 .shadow(color: .black.opacity(0.20), radius: 3, x: 0, y: 1)
 
-            // Triangle — left edge at x=22, vertically centred.
+            // Triangle — left edge at x=22. ZStack(alignment: .leading) already
+            // centers children vertically (alignment is leading-horizontal +
+            // center-vertical), so we only specify x.
             DownTriangle()
                 .fill(Color.white)
                 .overlay(
@@ -212,10 +214,10 @@ struct PillView: View {
                         .stroke(.white, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 )
                 .frame(width: 18, height: 16)
-                .offset(x: 22, y: (Self.pillHeight - 16) / 2)
+                .offset(x: 22)
 
-            // Circle — left edge at x=47, vertically centred. Preserves the
-            // .listening level-bump scale effect from the previous layout.
+            // Circle — left edge at x=47, vertical centring inherited from
+            // ZStack alignment. Preserves the .listening level-bump scale.
             Circle()
                 .fill(Color.white)
                 .frame(width: 17, height: 17)
@@ -223,7 +225,7 @@ struct PillView: View {
                              ? 1.0 + CGFloat(min(viewModel.level, 1)) * 0.10
                              : 1.0)
                 .animation(.easeOut(duration: 0.12), value: viewModel.level)
-                .offset(x: 47, y: (Self.pillHeight - 17) / 2)
+                .offset(x: 47)
 
             // Waveform — first bar's left edge at x=90, group is exactly 45pt
             // wide (7 bars × 3pt + 6 gaps × 4pt). Pinning the frame to that
@@ -262,38 +264,37 @@ struct PillView: View {
                 .shadow(color: .black.opacity(0.50 * s.figureOpacity), radius: 16, x: 0, y: 8)
                 .shadow(color: .black.opacity(0.20 * s.figureOpacity), radius: 3, x: 0, y: 1)
 
-            // Triangle — absolute positioning by SpawnTimeline.triangleX
+            // Triangle — absolute X by SpawnTimeline.triangleX. Vertical
+            // centring inherited from ZStack(alignment: .leading).
             DownTriangle()
                 .fill(Color.white)
                 .frame(width: 18, height: 16)
                 .opacity(s.figureOpacity)
                 .scaleEffect(s.figureScale)
-                .offset(x: s.triangleX,
-                        y: (Self.pillHeight - 16) / 2)
+                .offset(x: s.triangleX)
 
-            // Circle — absolute positioning by SpawnTimeline.dotX
+            // Circle — absolute X by SpawnTimeline.dotX.
             Circle()
                 .fill(Color.white)
                 .frame(width: 17, height: 17)
                 .opacity(s.figureOpacity)
                 .scaleEffect(s.figureScale)
-                .offset(x: s.dotX,
-                        y: (Self.pillHeight - 17) / 2)
+                .offset(x: s.dotX)
 
             // Bars — seven individual capsules at the pixel-exact columns
             // used by the idle waveform. Matching the idle geometry here
             // means the spawn end-frame is pixel-identical to the idle
             // frame, so there is no reflow when the view flips to
             // `normalBody`. Plain white during reveal — the silver gradient
-            // takes over once the pill transitions to `.armed`.
+            // takes over once the pill transitions to `.armed`. Vertical
+            // centring inherited from ZStack alignment.
             ForEach(0..<7, id: \.self) { i in
                 let barHeight = SpawnTimeline.barHeights[i]
                 Capsule()
                     .fill(Color.white)
                     .frame(width: SpawnTimeline.barWidth, height: barHeight)
                     .opacity(s.barOpacities[i])
-                    .offset(x: SpawnTimeline.barColumns[i],
-                            y: (Self.pillHeight - barHeight) / 2)
+                    .offset(x: SpawnTimeline.barColumns[i])
             }
         }
         .frame(width: Self.pillWidth, height: Self.pillHeight, alignment: .leading)
@@ -330,19 +331,20 @@ extension PillView {
                 .shadow(color: .black.opacity(0.50 * s.figureOpacity), radius: 16, x: 0, y: 8)
                 .shadow(color: .black.opacity(0.20 * s.figureOpacity), radius: 3, x: 0, y: 1)
 
+            // Vertical centring inherited from ZStack(alignment: .leading).
             DownTriangle()
                 .fill(Color.white)
                 .frame(width: 18, height: 16)
                 .opacity(s.figureOpacity)
                 .scaleEffect(s.figureScale)
-                .offset(x: s.triangleX, y: (Self.pillHeight - 16) / 2)
+                .offset(x: s.triangleX)
 
             Circle()
                 .fill(Color.white)
                 .frame(width: 17, height: 17)
                 .opacity(s.figureOpacity)
                 .scaleEffect(s.figureScale)
-                .offset(x: s.dotX, y: (Self.pillHeight - 17) / 2)
+                .offset(x: s.dotX)
 
             // Compiling label — fades in only during the post-push hold phase.
             // Frame matches the FULL pill width so the text remains centred
@@ -378,15 +380,16 @@ extension PillView {
                 .shadow(color: .black.opacity(0.50), radius: 16, x: 0, y: 8)
                 .shadow(color: .black.opacity(0.20), radius: 3, x: 0, y: 1)
 
+            // Vertical centring inherited from ZStack(alignment: .leading).
             DownTriangle()
                 .fill(Color.white)
                 .frame(width: 18, height: 16)
-                .offset(x: InstallTimeline.triPinnedX, y: (Self.pillHeight - 16) / 2)
+                .offset(x: InstallTimeline.triPinnedX)
 
             Circle()
                 .fill(Color.white)
                 .frame(width: 17, height: 17)
-                .offset(x: InstallTimeline.dotPushEndX, y: (Self.pillHeight - 17) / 2)
+                .offset(x: InstallTimeline.dotPushEndX)
 
             // Breathing "compiling" label, centred within the pill bounds.
             // TimelineView gives us a 60 Hz redraw clock; the sine drives the
@@ -431,21 +434,24 @@ extension PillView {
 
             // Triangle slides 12 → 22 over the circle-traverse window, in
             // sync with the circle. Read the value from the timeline rather
-            // than hardcoding 22 so the slide reads as smooth.
+            // than hardcoding 22 so the slide reads as smooth. Vertical
+            // centring inherited from ZStack(alignment: .leading).
             DownTriangle()
                 .fill(Color.white)
                 .frame(width: 18, height: 16)
-                .offset(x: s.triangleX, y: (Self.pillHeight - 16) / 2)
+                .offset(x: s.triangleX)
 
             Circle()
                 .fill(Color.white)
                 .frame(width: 17, height: 17)
-                .offset(x: s.dotX, y: (Self.pillHeight - 17) / 2)
+                .offset(x: s.dotX)
 
             // Bars cascade in right-to-left, with a small upward fade-in
-            // translate (3 → 0). Heights and X-columns are the same idle
-            // constants used by the resting waveform — guarantees the
-            // outro end-frame matches the idle frame exactly.
+            // translate (3 → 0 via barOffsetsY). Heights and X-columns are
+            // the same idle constants used by the resting waveform —
+            // guarantees the outro end-frame matches the idle frame
+            // exactly. Vertical centring inherited from ZStack alignment;
+            // we only apply the per-bar y-translate from the timeline.
             ForEach(0..<7, id: \.self) { i in
                 let h = InstallTimeline.barIdleHeights[i]
                 Capsule()
@@ -453,7 +459,7 @@ extension PillView {
                     .frame(width: InstallTimeline.barWidth, height: h)
                     .opacity(s.barOpacities[i])
                     .offset(x: InstallTimeline.barIdleColumns[i],
-                            y: (Self.pillHeight - h) / 2 + s.barOffsetsY[i])
+                            y: s.barOffsetsY[i])
             }
 
             // Label fading out + drifting downward. Same guard as the intro:
