@@ -69,9 +69,24 @@ final class AppCoordinator {
     /// Resets to false at session end. Drives the gating in
     /// `maybeBeginStreaming()` and the cleanup in error/cancel paths.
     private var installPathActive: Bool = false
+    /// Set when `pill.onInstallIntroComplete` fires. Used together with
+    /// `whisperWarmDone` so that the outro only fires once BOTH the
+    /// intro animation has finished AND warm-up has resolved — avoids
+    /// the race where a fast warm-up triggers the outro mid-intro and
+    /// the pill phase jumps visibly.
+    private var installIntroDone: Bool = false
     /// Set when `pill.onInstallOutroComplete` fires. Sole gate that
     /// promotes the install path from `.spawning` → `.streaming`.
     private var installOutroDone: Bool = false
+    /// True once the install animation has run to completion at least
+    /// once in this app session (i.e. outro fired). The first hotkey
+    /// press of a session always uses the install path regardless of
+    /// warm-up state — that's the canonical "app start" choreography.
+    /// Subsequent presses fall through to the cinematic spawn (or no
+    /// animation, depending on PillWindowController.show()'s session
+    /// memory). Resets on model switch so a new model gets its install
+    /// animation again.
+    private var hasPlayedSessionFirstPress: Bool = false
     /// Drives `pill.setInstallProgress(_:)` from the install intro
     /// completion until either (a) warm-up resolves and we snap to 1.0
     /// and play the outro, or (b) 30 s passes and the rim sits visually
@@ -85,6 +100,13 @@ final class AppCoordinator {
     /// on slow disks. If warm-up resolves earlier we snap to 1.0; if it
     /// takes longer, the rim holds at 1.0.
     private static let installRimSweepDuration: TimeInterval = 30.0
+
+    /// Quick rim-sweep duration used when warm-up has already resolved
+    /// by the time the intro animation finishes (cached model, fast
+    /// disk). Long enough that the rim is visibly a sweep — not a snap
+    /// — so the install choreography reads as deliberate. Short enough
+    /// that the user isn't waiting on a fake progress bar.
+    private static let installRimQuickSweepDuration: TimeInterval = 1.0
 
     init(prefs: PreferencesStore = .shared) {
         self.prefs = prefs
@@ -131,24 +153,41 @@ final class AppCoordinator {
             self.maybeBeginStreaming()
         }
 
-        // Install path: intro complete → kick off the rim-progress driver.
-        // Note: installRimTask is a fallback timer — the moment
-        // `whisper.warmUp()` actually resolves we cancel the timer, snap
-        // the rim to 1.0, and trigger the outro. The timer just gives the
-        // user *visible* progress in case the warm-up takes its full
-        // 30-90s; without it the rim would sit at 0 looking broken.
+        // Install path: intro complete → either start the long rim-progress
+        // driver (if warm-up still pending) or do a quick 1s sweep + outro
+        // (if warm-up already finished during the intro). Either way mark
+        // `installIntroDone` so the warm-up callback can decide whether
+        // it's racing the intro or showing up after.
         pill.onInstallIntroComplete = { [weak self] in
-            self?.startInstallRimSweep()
+            guard let self else { return }
+            self.installIntroDone = true
+            if self.whisperWarmDone {
+                // Cached-model fast path — warm-up beat the intro. Run a
+                // brief rim sweep so the user still sees the compile
+                // phase as a deliberate beat, then auto-fire the outro.
+                self.startInstallRimSweep(over: Self.installRimQuickSweepDuration,
+                                          thenPlayOutro: true)
+            } else {
+                // Cold-model slow path — drive the full 30s rim while we
+                // wait for `whisper.warmUp()`. The warm-up callback will
+                // cancel this and play the outro when it resolves.
+                self.startInstallRimSweep(over: Self.installRimSweepDuration,
+                                          thenPlayOutro: false)
+            }
         }
 
         // Install path: outro complete → start streaming. We only honour
         // this when we're still in `.spawning` (early hotkey release would
         // have already moved us past .spawning, in which case the outro
         // we triggered before the user gave up should just no-op here).
+        // Mark `hasPlayedSessionFirstPress` here so the install animation
+        // is treated as "done" only once we've actually finished it; if
+        // the user cancels mid-spawn, the next press still plays it.
         pill.onInstallOutroComplete = { [weak self] in
             guard let self else { return }
             guard self.installPathActive else { return }
             self.installOutroDone = true
+            self.hasPlayedSessionFirstPress = true
             self.maybeBeginStreaming()
         }
 
@@ -214,12 +253,16 @@ final class AppCoordinator {
             installRimTask = nil
             spawnAnimationDone = false
             whisperWarmDone = false
+            installIntroDone = false
             installOutroDone = false
             installPathActive = false
             spawnBuffer.removeAll(keepingCapacity: false)
             audio.stop()
             endSession(restoreClipboard: true)
         }
+        // New model = new compile potentially required = let the install
+        // animation play again on the next first-press.
+        hasPlayedSessionFirstPress = false
         state = .loadingModel
         modelSwitchTask = Task { [weak self] in
             guard let self else { return }
@@ -256,12 +299,18 @@ final class AppCoordinator {
             return
         }
 
-        // Choose between cinematic spawn (model already warm or warming
-        // briefly) and the full install animation (model still loading on
-        // a fresh launch). Decision is made once at press time and frozen
-        // for this session via `installPathActive` — flipping mid-session
-        // would leave the pill choreography in a confused state.
-        let useInstallPath = (state == .loadingModel)
+        // The install animation is the canonical "app first start"
+        // choreography — it plays on the first hotkey press of every
+        // session, regardless of whether warm-up is still in flight.
+        // The rim sweep adapts: if warm-up is fast (cached model), we
+        // do a quick 1s sweep so the compile phase still reads as
+        // deliberate; if it's slow (fresh model, first compile),
+        // the full 30s sweep with real progress applies.
+        // Subsequent presses in the same session fall through to
+        // `pill.show()` (cinematic spawn / no animation).
+        // Decision is frozen for the press via `installPathActive` —
+        // flipping mid-session would confuse the pill choreography.
+        let useInstallPath = (state == .loadingModel) || !hasPlayedSessionFirstPress
         installPathActive = useInstallPath
 
         // Enter spawning state — audio capture starts immediately and
@@ -291,11 +340,12 @@ final class AppCoordinator {
         }
 
         // Reset readiness flags for the chosen path. spawnAnimationDone +
-        // whisperWarmDone gate the cinematic path; installOutroDone gates
-        // the install path. We always reset both so cancelled-and-retried
-        // sessions start from a clean slate.
+        // whisperWarmDone gate the cinematic path; installIntroDone +
+        // installOutroDone gate the install path. We always reset all of
+        // them so cancelled-and-retried sessions start from a clean slate.
         spawnAnimationDone = false
         whisperWarmDone = false
+        installIntroDone = false
         installOutroDone = false
 
         whisperWarmAwaiter?.cancel()
@@ -313,9 +363,14 @@ final class AppCoordinator {
             await MainActor.run {
                 self.whisperWarmDone = true
                 if self.installPathActive {
-                    // Install path: snap the rim to 1.0 (in case the
-                    // 30s timer hasn't reached it yet) and play the outro.
-                    // Streaming starts when the outro callback fires.
+                    // Install path: only fire the outro if the intro has
+                    // already completed. If warm-up beat the intro
+                    // (cached/fast model), we silently set the flag and
+                    // let `pill.onInstallIntroComplete` pick up the
+                    // shortcut — running a quick 1s rim sweep + outro.
+                    // Without this guard, a fast warm-up would yank the
+                    // pill into `.installOutro` mid-intro and look janky.
+                    guard self.installIntroDone else { return }
                     self.installRimTask?.cancel()
                     self.installRimTask = nil
                     self.pill.setInstallProgress(1.0)
@@ -329,25 +384,39 @@ final class AppCoordinator {
         }
     }
 
-    /// Drives the rim from 0 → 1 over `installRimSweepDuration` once the
-    /// install intro animation completes. Cancelled and replaced by a snap
-    /// to 1.0 the moment `whisper.warmUp()` actually resolves; if the timer
-    /// reaches the end before warm-up, the rim sits visually full and we
-    /// keep waiting (the outro doesn't fire until warm-up is done).
+    /// Drives the rim from 0 → 1 over `duration` seconds once the install
+    /// intro animation completes. Two modes:
+    ///
+    ///   • **Long sweep** (`thenPlayOutro: false`) — used when warm-up is
+    ///     still in flight. Cancelled and replaced by a snap to 1.0 the
+    ///     moment `whisper.warmUp()` resolves; the warm-up callback
+    ///     plays the outro. If the sweep reaches the end before warm-up,
+    ///     the rim sits visually full and we keep waiting.
+    ///
+    ///   • **Quick sweep** (`thenPlayOutro: true`) — used when warm-up
+    ///     already resolved during the intro (cached-model fast path).
+    ///     The sweep runs to completion uninterrupted and auto-fires
+    ///     the outro when it finishes, so the user sees a deliberate
+    ///     intro → quick compile → outro sequence rather than the pill
+    ///     skipping straight to the outro.
     ///
     /// 60Hz tick — same cadence WaveformView uses for live audio bars,
     /// chosen because it matches the screen refresh rate on M1+ Macs.
-    private func startInstallRimSweep() {
+    private func startInstallRimSweep(over duration: TimeInterval = installRimSweepDuration,
+                                      thenPlayOutro: Bool = false) {
         installRimTask?.cancel()
         installRimTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let start = CACurrentMediaTime()
             while !Task.isCancelled {
                 let elapsed = CACurrentMediaTime() - start
-                let p = min(1.0, elapsed / Self.installRimSweepDuration)
+                let p = min(1.0, elapsed / duration)
                 self.pill.setInstallProgress(p)
                 if p >= 1.0 { break }
                 try? await Task.sleep(nanoseconds: 16_000_000) // ~60Hz
+            }
+            if !Task.isCancelled && thenPlayOutro {
+                self.pill.playInstallOutro()
             }
         }
     }
@@ -411,6 +480,7 @@ final class AppCoordinator {
             installRimTask = nil
             spawnAnimationDone = false
             whisperWarmDone = false
+            installIntroDone = false
             installOutroDone = false
             installPathActive = false
             spawnBuffer.removeAll(keepingCapacity: false)
