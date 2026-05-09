@@ -16,6 +16,7 @@ final class PreferencesStore: ObservableObject {
 
     private enum Key {
         static let activeModelID = "Whisper.activeModelID"
+        static let selectedLanguageCode = "Whisper.selectedLanguageCode"
         static let didCompleteFirstRun = "App.didCompleteFirstRun"
         static let accentHex = "App.accentColorHex"
         static let polishEnabled = "Polish.enabled"
@@ -38,6 +39,28 @@ final class PreferencesStore: ObservableObject {
             // for the spawn animation reset) can react without a tight
             // Combine binding back into the prefs store.
             NotificationCenter.default.post(name: .activeModelDidChange, object: self)
+        }
+    }
+
+    /// User's transcription language preference. Either a Whisper language
+    /// code (`"en"`, `"es"`, `"ja"`, …) to pin a specific language, or
+    /// `TranscriptionLanguageMode.autoCode` (`"auto"`) to auto-detect on
+    /// the first audio chunk and lock for the rest of the session.
+    ///
+    /// Validity is enforced: an unknown code (e.g. corrupted UserDefaults
+    /// value, or one removed from the catalog in a future release)
+    /// silently falls back to `"auto"` rather than blowing up.
+    ///
+    /// Effective on the **next** hotkey press, never an in-flight session
+    /// (the engine reads this once at `startStream` and locks it).
+    /// English-only (`.en`) model variants ignore this setting — they can
+    /// only decode English regardless. The Settings UI hides the picker
+    /// in that case.
+    @Published var selectedLanguageCode: String {
+        didSet {
+            guard selectedLanguageCode != oldValue else { return }
+            UserDefaults.standard.set(selectedLanguageCode,
+                                      forKey: Key.selectedLanguageCode)
         }
     }
 
@@ -105,6 +128,7 @@ final class PreferencesStore: ObservableObject {
         let storedModel = defaults.string(forKey: Key.activeModelID)
         let storedDidRun = defaults.bool(forKey: Key.didCompleteFirstRun)
         let storedHex = defaults.string(forKey: Key.accentHex)
+        let storedLang = defaults.string(forKey: Key.selectedLanguageCode)
 
         if let storedModel, ModelCatalog.model(id: storedModel) != nil {
             self.activeModelID = storedModel
@@ -116,6 +140,19 @@ final class PreferencesStore: ObservableObject {
             self.activeModelID = recommended.id
             self.didCompleteFirstRun = false
             defaults.set(recommended.id, forKey: Key.activeModelID)
+        }
+
+        // Language preference: validate against our curated list. An unknown
+        // code (corrupted defaults, value removed from a future catalog) falls
+        // back to "auto" rather than crashing or silently using something
+        // unexpected. First-launch users get "auto" so they're not forced
+        // into English even on a multilingual model.
+        if let storedLang, TranscriptionLanguageCatalog.isValid(storedLang) {
+            self.selectedLanguageCode = storedLang
+        } else {
+            self.selectedLanguageCode = TranscriptionLanguageMode.autoCode
+            defaults.set(TranscriptionLanguageMode.autoCode,
+                         forKey: Key.selectedLanguageCode)
         }
 
         // Accent is always present (defaulted) so the app paints sensibly on a
@@ -152,6 +189,27 @@ final class PreferencesStore: ObservableObject {
     /// Restore the brand violet.
     func resetAccent() {
         accentHex = Self.defaultAccentHex
+    }
+
+    // MARK: - Language derived helpers
+
+    /// What we actually pass to the engine. If the active model is
+    /// English-only (a `.en` variant), force `"en"` regardless of what's
+    /// in `selectedLanguageCode` — those models can't decode anything else
+    /// and passing `"auto"` or another locale would either error or
+    /// silently produce nonsense. Otherwise pass through the user's pick.
+    var effectiveLanguageCode: String {
+        if let model = ModelCatalog.model(id: activeModelID), !model.isMultilingual {
+            return "en"
+        }
+        return selectedLanguageCode
+    }
+
+    /// True when the active model variant is multilingual — i.e. the
+    /// language picker should be enabled in Settings. Single source of
+    /// truth so the UI logic stays one-line.
+    var activeModelSupportsLanguageChoice: Bool {
+        ModelCatalog.model(id: activeModelID)?.isMultilingual ?? false
     }
 
     // MARK: - Polish derived helpers
