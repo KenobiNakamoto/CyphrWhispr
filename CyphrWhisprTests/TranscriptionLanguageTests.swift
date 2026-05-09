@@ -81,6 +81,94 @@ final class TranscriptionLanguageTests: XCTestCase {
         }
     }
 
+    /// Pinned set of languages CyphrWhispr explicitly commits to supporting.
+    /// Driven by an early product requirement: Spanish, German, Catalan and
+    /// English are the founding-user must-haves; the rest (major European,
+    /// Arabic, Chinese, Japanese) reflect the v1 audience scope. A failure
+    /// here means we shipped a build that visibly drops one of these from
+    /// the picker — block it.
+    func testProductRequiredLanguagesAllPresent() {
+        let required: [(String, String)] = [
+            // Founding-user core — must be in every release
+            ("en", "English"),
+            ("es", "Spanish"),
+            ("de", "German"),
+            ("ca", "Catalan"),
+            // Major European
+            ("fr", "French"),
+            ("it", "Italian"),
+            ("pt", "Portuguese"),
+            ("nl", "Dutch"),
+            ("pl", "Polish"),
+            ("ru", "Russian"),
+            ("uk", "Ukrainian"),
+            ("sv", "Swedish"),
+            ("no", "Norwegian"),
+            ("da", "Danish"),
+            ("fi", "Finnish"),
+            ("cs", "Czech"),
+            ("sk", "Slovak"),
+            ("hu", "Hungarian"),
+            ("ro", "Romanian"),
+            ("bg", "Bulgarian"),
+            ("hr", "Croatian"),
+            ("sr", "Serbian"),
+            ("sl", "Slovenian"),
+            ("bs", "Bosnian"),
+            ("el", "Greek"),
+            ("tr", "Turkish"),
+            ("lt", "Lithuanian"),
+            ("lv", "Latvian"),
+            ("et", "Estonian"),
+            // Major non-European
+            ("ar", "Arabic"),
+            ("zh", "Chinese"),
+            ("yue", "Cantonese"),
+            ("ja", "Japanese"),
+            ("ko", "Korean"),
+            ("hi", "Hindi"),
+            ("he", "Hebrew"),
+        ]
+        for (code, expectedName) in required {
+            let lang = TranscriptionLanguageCatalog.language(for: code)
+            XCTAssertNotNil(lang,
+                            "REQUIRED language missing from picker: \(expectedName) (\(code))")
+            XCTAssertEqual(lang?.displayName, expectedName,
+                           "Display name for \(code) should be '\(expectedName)' (got '\(lang?.displayName ?? "nil")')")
+        }
+    }
+
+    /// Defends against typos in our curated catalog — every code we ship
+    /// MUST be one Whisper actually accepts at decode time. Without this
+    /// guard a typo (`"ge"` instead of `"de"`) would make it through code
+    /// review, get into UserDefaults on user machines, and silently break
+    /// transcription only for users who picked that bad code.
+    func testEveryCuratedCodeIsAValidWhisperCode() {
+        for lang in TranscriptionLanguageCatalog.supported {
+            XCTAssertTrue(
+                WhisperOfficialLanguages.contains(lang.code),
+                "curated code '\(lang.code)' (\(lang.displayName)) is NOT in Whisper's tokenizer LANGUAGES dict — typo or aspirational addition?"
+            )
+        }
+    }
+
+    func testWhisperOfficialLanguagesHasExpectedCount() {
+        // Sanity check on the source-of-truth set — Whisper's tokenizer
+        // ships exactly 100 languages as of 2026-05-09 (99 in the original
+        // Whisper paper plus Cantonese `yue`, added later).
+        // A change here means either we mis-typed the constant or upstream
+        // Whisper added / removed languages — either way, worth a deliberate
+        // look rather than silently slipping by.
+        XCTAssertEqual(WhisperOfficialLanguages.codes.count, 100)
+    }
+
+    func testWhisperOfficialLanguagesIncludesAutoSentinelHandling() {
+        // The auto sentinel is NOT a Whisper language code — it's our own
+        // user-facing string. Make sure we never accidentally bake it in
+        // to the official set.
+        XCTAssertFalse(WhisperOfficialLanguages.contains(TranscriptionLanguageMode.autoCode))
+    }
+
     func testNativeNameOmittedForEnglish() {
         // English is its own native name; rendering "English — English" in
         // the picker would be silly. The picker treats nil nativeName as
