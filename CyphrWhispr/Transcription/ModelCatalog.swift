@@ -23,8 +23,15 @@ struct WhisperModel: Identifiable, Hashable, Sendable {
 /// The set of models we ship pickers for. WhisperKit can technically download
 /// any model in the `argmaxinc/whisperkit-coreml` repo, but listing every
 /// variant overwhelms the picker. We curate the useful ones.
+///
+/// English-only (`.en`) variants are smaller, faster, and hallucinate less
+/// for English input — they're the right default for English speakers.
+/// Multilingual variants are larger but cover ~99 languages; required for
+/// any non-English dictation. The Settings UI surfaces both groups so the
+/// user can switch when their dictation language changes.
 enum ModelCatalog {
     static let all: [WhisperModel] = [
+        // MARK: English-only (smaller, faster, less hallucination)
         WhisperModel(
             id: "openai_whisper-tiny.en",
             displayName: "Tiny (English)",
@@ -57,13 +64,34 @@ enum ModelCatalog {
             isMultilingual: false,
             speedHint: "Higher accuracy. Comfortable on 16 GB+ Apple Silicon."
         ),
+
+        // MARK: Multilingual (~99 languages — required for non-English)
+        // Same architecture as the .en variants above, just trained on the
+        // full multilingual mix. Smallest viable for daily-driver
+        // multilingual dictation per Argmax/HuggingFace evals: `small`.
+        WhisperModel(
+            id: "openai_whisper-small",
+            displayName: "Small (Multilingual)",
+            approxSizeMB: 466,
+            tier: .small,
+            isMultilingual: true,
+            speedHint: "Smallest viable for non-English daily dictation. ~99 languages."
+        ),
+        WhisperModel(
+            id: "openai_whisper-medium",
+            displayName: "Medium (Multilingual)",
+            approxSizeMB: 1_500,
+            tier: .medium,
+            isMultilingual: true,
+            speedHint: "Higher multilingual accuracy. Comfortable on 16 GB+ Apple Silicon."
+        ),
         WhisperModel(
             id: "openai_whisper-large-v3-v20240930_turbo",
             displayName: "Large v3 Turbo",
             approxSizeMB: 1_600,
             tier: .largeTurbo,
             isMultilingual: true,
-            speedHint: "Near-large quality, ~1.5× realtime on M3 Pro+."
+            speedHint: "Near-large quality, ~1.5× realtime on M3 Pro+. Sweet spot for power users."
         ),
         WhisperModel(
             id: "openai_whisper-large-v3",
