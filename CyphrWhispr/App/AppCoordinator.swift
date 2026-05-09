@@ -120,7 +120,15 @@ final class AppCoordinator {
 
     init(prefs: PreferencesStore = .shared) {
         self.prefs = prefs
-        self.whisper = WhisperKitBackend(modelName: prefs.activeModelID)
+        // Pass the persisted language preference into the backend at
+        // construction so the very first hotkey press uses the right
+        // language, not the backend's "en" default. `effectiveLanguageCode`
+        // resolves the picker choice against the model's English-only
+        // constraint — see PreferencesStore for the rule.
+        self.whisper = WhisperKitBackend(
+            modelName: prefs.activeModelID,
+            languageCode: prefs.effectiveLanguageCode
+        )
     }
 
     /// Serial queue for live typing so paste/backspace cycles don't pile up on
@@ -231,6 +239,23 @@ final class AppCoordinator {
             .dropFirst()
             .removeDuplicates()
             .sink { [weak self] newID in self?.switchModel(to: newID) }
+            .store(in: &cancellables)
+
+        // Push language-preference changes into the backend whenever the user
+        // toggles the picker in Settings (or when the active model changes
+        // and `effectiveLanguageCode` flips because we moved between an .en
+        // and a multilingual variant). The engine reads its language code
+        // once at `startStream()`, so propagating eagerly means the next
+        // hotkey press picks up the new value with no race window.
+        Publishers.CombineLatest(prefs.$selectedLanguageCode,
+                                 prefs.$activeModelID)
+            .compactMap { [weak prefs] _, _ in prefs?.effectiveLanguageCode }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] code in
+                guard let self else { return }
+                Task { await self.whisper.setLanguageCode(code) }
+            }
             .store(in: &cancellables)
     }
 

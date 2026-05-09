@@ -17,6 +17,8 @@ struct ModelsTabView: View {
         VStack(spacing: 14) {
             recommendationBanner
 
+            languageCard
+
             SettingsCard(padding: 0) {
                 VStack(spacing: 0) {
                     // Header row inside the card.
@@ -121,6 +123,148 @@ struct ModelsTabView: View {
                         .strokeBorder(prefs.accent.opacity(0.30), lineWidth: 1)
                 )
         )
+    }
+
+    // MARK: - Language card
+    //
+    // Sits between the recommendation banner and the model list. Shows the
+    // current language pick (Auto-detect by default) when the active model
+    // is multilingual, or a "Switch to a multilingual model to enable"
+    // hint when the active model is `.en`-only. Decoupled from the model
+    // row so the user can change either independently.
+
+    private var languageCard: some View {
+        SettingsCard(padding: 14) {
+            HStack(spacing: 12) {
+                // Globe badge — same visual rhythm as the lightning bolt in
+                // the recommendation banner, swapped for a globe to signal
+                // "language" at a glance.
+                Circle()
+                    .fill(prefs.accentWash)
+                    .overlay(
+                        Image(systemName: "globe")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(prefs.accent)
+                    )
+                    .frame(width: 26, height: 26)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Dictation language")
+                        .font(SettingsDesign.krBody(size: 13, weight: .semibold))
+                        .foregroundStyle(SettingsDesign.textPrimary)
+                    Text(languageHintText)
+                        .font(SettingsDesign.krCaption(size: 11.5))
+                        .foregroundStyle(SettingsDesign.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                // The picker itself. Disabled when the active model is
+                // English-only — there's nothing meaningful to pick. We
+                // still show the menu so the user understands the affordance
+                // exists once they switch models.
+                LanguagePickerMenu(
+                    selectedCode: $prefs.selectedLanguageCode,
+                    enabled: prefs.activeModelSupportsLanguageChoice
+                )
+            }
+        }
+    }
+
+    /// Caption under the "Dictation language" label. Tracks the active
+    /// model's English-only state so the message either reads as
+    /// instructional ("multilingual model required") or descriptive
+    /// ("auto-detect locks per session").
+    private var languageHintText: String {
+        if !prefs.activeModelSupportsLanguageChoice {
+            return "Switch to a multilingual model below to enable language selection."
+        }
+        let code = prefs.selectedLanguageCode
+        if code == TranscriptionLanguageMode.autoCode {
+            return "Whisper detects the language from the first second of audio, then locks it for the rest of the session."
+        }
+        let name = TranscriptionLanguageCatalog.language(for: code)?.displayName ?? code
+        return "Pinned to \(name). Highest accuracy — no detection penalty."
+    }
+}
+
+// MARK: - Language picker menu
+
+/// Pull-down picker of the curated language catalog. Auto-detect is sorted
+/// to the top; the rest follow in catalog order (English first, then
+/// alphabetical). Disabled when `enabled == false` (English-only model
+/// active) but still rendered so the affordance is visible — clicking it
+/// in the disabled state is a no-op.
+private struct LanguagePickerMenu: View {
+    @Binding var selectedCode: String
+    let enabled: Bool
+
+    var body: some View {
+        Menu {
+            // Auto pinned at the top — the friendly default for multilingual users.
+            Button {
+                selectedCode = TranscriptionLanguageMode.autoCode
+            } label: {
+                rowLabel(for: TranscriptionLanguageCatalog.auto, isSelected: selectedCode == TranscriptionLanguageMode.autoCode)
+            }
+
+            Divider()
+
+            // Everything else, in catalog order (English first → alphabetical).
+            ForEach(TranscriptionLanguageCatalog.supported) { lang in
+                Button {
+                    selectedCode = lang.code
+                } label: {
+                    rowLabel(for: lang, isSelected: selectedCode == lang.code)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(currentLanguageDisplay)
+                    .font(SettingsDesign.krBody(size: 12.5, weight: .medium))
+                    .foregroundStyle(enabled ? SettingsDesign.textPrimary : SettingsDesign.textTertiary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(enabled ? SettingsDesign.textSecondary : SettingsDesign.textTertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(enabled ? 0.06 : 0.03))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.white.opacity(enabled ? 0.12 : 0.06), lineWidth: 0.8)
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .disabled(!enabled)
+        .fixedSize()
+    }
+
+    private var currentLanguageDisplay: String {
+        if selectedCode == TranscriptionLanguageMode.autoCode {
+            return "Auto-detect"
+        }
+        return TranscriptionLanguageCatalog.language(for: selectedCode)?.displayName ?? selectedCode
+    }
+
+    /// Menu row formatter — display name + native script subtitle (when
+    /// different) + checkmark on the active selection.
+    @ViewBuilder
+    private func rowLabel(for lang: TranscriptionLanguage, isSelected: Bool) -> some View {
+        if let native = lang.nativeName {
+            Text("\(lang.displayName) — \(native)")
+        } else {
+            Text(lang.displayName)
+        }
+        if isSelected {
+            Image(systemName: "checkmark")
+        }
     }
 }
 
