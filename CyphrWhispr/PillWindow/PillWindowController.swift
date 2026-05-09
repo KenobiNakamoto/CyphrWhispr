@@ -98,6 +98,17 @@ final class PillWindowController {
         viewModel.cancelSpawn()
         viewModel.cancelInstall()
 
+        // Set the phase to the correct first frame BEFORE the panel becomes
+        // visible. Same flash-prevention rationale as showInstall(): without
+        // this, SwiftUI renders one frame at the previous phase (typically
+        // .idle from a freshly-created panel) before the spawn Task fires
+        // and updates the phase. See showInstall() for the full explanation.
+        if spawnPending {
+            viewModel.phase = .spawning(progress: 0)
+        } else {
+            viewModel.phase = .armed
+        }
+
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.setFrameOrigin(targetOrigin(for: panel))
@@ -119,10 +130,11 @@ final class PillWindowController {
                 }
             }
         } else {
-            viewModel.phase = .armed
-            // Dispatch async (matching the cinematic path) so AppCoordinator's
-            // callback can't re-enter PillWindowController synchronously inside
-            // show(). Both paths now have the same re-entrancy behaviour.
+            // Phase already set to .armed above; just dispatch the callback
+            // async (matching the cinematic path) so AppCoordinator's
+            // callback can't re-enter PillWindowController synchronously
+            // inside show(). Both paths now have the same re-entrancy
+            // behaviour.
             let cb = onSpawnComplete
             Task { @MainActor in cb?() }
         }
@@ -145,6 +157,18 @@ final class PillWindowController {
         viewModel.cancelSpawn()
         viewModel.cancelInstall()
 
+        // CRITICAL: set the phase to the install intro's first frame BEFORE
+        // the panel becomes visible. Without this, the panel briefly renders
+        // at the previous .idle phase (full 170pt pill with figures + bars)
+        // before the playInstallSpawn Task gets scheduled and flips the
+        // phase to .installSpawning(progress: 0) (63pt seed pill, figures
+        // invisible). The user sees a "full pill snaps small, then expands"
+        // ugly flash before the actual install choreography begins.
+        // Setting phase synchronously here means SwiftUI's first render of
+        // the panel after orderFrontRegardless is already at the seed-pill
+        // state — the very first frame the user sees.
+        viewModel.phase = .installSpawning(progress: 0)
+
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.setFrameOrigin(targetOrigin(for: panel))
@@ -158,6 +182,10 @@ final class PillWindowController {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            // playInstallSpawn re-sets phase = .installSpawning(progress: 0)
+            // and then drives it to 1.0 over `duration`. The redundant
+            // re-set is harmless — SwiftUI dedupes Equatable @Published
+            // changes, and the timeline always starts at 0 anyway.
             let completed = await self.viewModel.playInstallSpawn()
             // playInstallSpawn ends with phase = .installCompiling(progress: 0).
             // Fire the callback only on uncancelled completion so the
