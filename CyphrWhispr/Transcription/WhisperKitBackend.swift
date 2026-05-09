@@ -43,6 +43,24 @@ actor WhisperKitBackend: WhisperEngine {
     /// `finishStream`.
     private var committedText: String = ""
 
+    // MARK: - Language preference
+
+    /// User's persisted language preference: a Whisper language code
+    /// (`"en"`, `"es"`, …) or the auto sentinel
+    /// (`TranscriptionLanguageMode.autoCode`). Updated via `setLanguageCode(_:)`
+    /// — effective on the next `startStream()`. Defaults to English so a
+    /// brand-new install with the bundled `.en` model behaves identically
+    /// to before this feature shipped.
+    private var requestedLanguageCode: String = "en"
+
+    /// Once the auto-detect path runs against a stream's first transcribe,
+    /// we lock the detected code here for the rest of the session — every
+    /// subsequent partial reuses it. Cleared on each `startStream()` so the
+    /// next session re-detects from scratch. `nil` means "haven't detected
+    /// yet" (or we're not in auto mode — in which case `requestedLanguageCode`
+    /// is the source of truth and this stays nil).
+    private var sessionLockedLanguage: String?
+
     /// Audio is captured at 16 kHz mono Float32 by `AudioCaptureEngine`.
     private static let sampleRateHz: TimeInterval = 16_000
 
@@ -59,9 +77,11 @@ actor WhisperKitBackend: WhisperEngine {
 
     init(
         modelName: String = "openai_whisper-small.en",
+        languageCode: String = "en",
         partialIntervalMillis: Int = 800
     ) {
         self.modelName = modelName
+        self.requestedLanguageCode = languageCode
         self.partialIntervalNanos = UInt64(partialIntervalMillis) * 1_000_000
     }
 
@@ -122,11 +142,22 @@ actor WhisperKitBackend: WhisperEngine {
         }
     }
 
+    /// Update the user's language preference. Effective from the next
+    /// `startStream()` call onward — never affects an in-flight stream
+    /// (we don't want the language to flip mid-utterance).
+    func setLanguageCode(_ code: String) {
+        requestedLanguageCode = code
+    }
+
     func startStream() -> AsyncStream<TranscriptUpdate> {
         partialTask?.cancel()
         partialTask = nil
         samples.removeAll(keepingCapacity: true)
         committedText = ""
+        // Fresh session = fresh language detection. If the user is in auto
+        // mode, we'll re-run language ID against the first non-empty
+        // transcribe of THIS session and lock it for the rest.
+        sessionLockedLanguage = nil
 
         let (stream, cont) = AsyncStream<TranscriptUpdate>.makeStream()
         continuation = cont
@@ -144,6 +175,74 @@ actor WhisperKitBackend: WhisperEngine {
 
     func append(samples newSamples: [Float]) {
         samples.append(contentsOf: newSamples)
+    }
+
+    // MARK: - Decode options
+
+    /// Build `DecodingOptions` for the current call. Three cases:
+    ///
+    ///   1. **Forced language** (`requestedLanguageCode != "auto"`): pin
+    ///      `language` to the user's choice. `detectLanguage = false` and
+    ///      `usePrefillPrompt = true` so Whisper skips the LID head and
+    ///      decodes immediately with the language token prefilled.
+    ///
+    ///   2. **Auto mode, language already locked for this session**
+    ///      (`sessionLockedLanguage != nil`): treated identically to forced
+    ///      — we ran detection on the first transcribe and committed to a
+    ///      language for the rest of the session, so subsequent transcribes
+    ///      use that locked code with the prefill fast-path.
+    ///
+    ///   3. **Auto mode, no lock yet**: this is the first transcribe of the
+    ///      session. Set `detectLanguage = true` and `usePrefillPrompt = false`
+    ///      so Whisper runs its LID head on the leading audio. After the
+    ///      transcribe returns, we'll inspect `result.language` and lock it
+    ///      via `lockSessionLanguage(from:)` so subsequent calls take the
+    ///      forced path. The "few hundred ms" detection penalty only hits
+    ///      this one transcribe.
+    private func currentDecodeOptions() -> DecodingOptions {
+        let pinned = effectivePinnedLanguage()
+        if let pinned {
+            return DecodingOptions(
+                task: .transcribe,
+                language: pinned,
+                usePrefillPrompt: true,
+                detectLanguage: false,
+                skipSpecialTokens: true
+            )
+        }
+        // First-of-session detection pass.
+        return DecodingOptions(
+            task: .transcribe,
+            language: nil,
+            usePrefillPrompt: false,
+            detectLanguage: true,
+            skipSpecialTokens: true
+        )
+    }
+
+    /// `nil` if we should run language detection on the next transcribe,
+    /// otherwise the language code to pin. Auto mode resolves to the
+    /// session-locked code if we've already detected once.
+    private func effectivePinnedLanguage() -> String? {
+        if requestedLanguageCode == TranscriptionLanguageMode.autoCode {
+            return sessionLockedLanguage
+        }
+        return requestedLanguageCode
+    }
+
+    /// After an auto-mode detection transcribe returns, capture the language
+    /// it picked so subsequent transcribes in the same session use the
+    /// faster prefill path. Idempotent — only sets the lock if we're in
+    /// auto mode and haven't locked yet.
+    private func lockSessionLanguage(from results: [TranscriptionResult]) {
+        guard requestedLanguageCode == TranscriptionLanguageMode.autoCode,
+              sessionLockedLanguage == nil else { return }
+        // TranscriptionResult.language is the detected code (when LID ran)
+        // or the requested language (when prefilled). Take the first
+        // non-empty value across the result set.
+        if let detected = results.first(where: { !$0.language.isEmpty })?.language {
+            sessionLockedLanguage = detected
+        }
     }
 
     func finishStream() async throws -> String {
@@ -173,7 +272,18 @@ actor WhisperKitBackend: WhisperEngine {
 
         let tailText: String
         do {
-            let results = try await pipe.transcribe(audioArray: tail)
+            let options = currentDecodeOptions()
+            let results = try await pipe.transcribe(audioArray: tail,
+                                                    decodeOptions: options)
+            // If this was an auto-mode session and we never had time to
+            // detect during streaming (very short utterance), the final
+            // transcribe IS the detection. Lock from the result so any
+            // future session inherits a sensible default? No — we
+            // intentionally clear `sessionLockedLanguage` on the next
+            // `startStream()`, so the locking here only matters if the
+            // result text is the only thing we'd emit. Locking is
+            // harmless either way.
+            lockSessionLanguage(from: results)
             tailText = Self.combine(results: results)
         } catch {
             continuation?.finish()
@@ -191,7 +301,13 @@ actor WhisperKitBackend: WhisperEngine {
         guard !samples.isEmpty else { return }
         let snapshot = samples
         do {
-            let results = try await pipe.transcribe(audioArray: snapshot)
+            let options = currentDecodeOptions()
+            let results = try await pipe.transcribe(audioArray: snapshot,
+                                                    decodeOptions: options)
+            // If we just ran auto-detection, lock the result so subsequent
+            // partials use the faster prefilled path. No-op when not in
+            // auto mode or when already locked.
+            lockSessionLanguage(from: results)
             let allSegments = results.flatMap { $0.segments }
 
             // Decide which segments are committable — old enough that Whisper
