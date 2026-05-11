@@ -17,10 +17,10 @@ struct AboutTabView: View {
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .center, spacing: 32) {
+            VStack(alignment: .center, spacing: 28) {
                 hero
                 aboutCard
-                    .frame(maxWidth: 760)
+                    .frame(maxWidth: 720)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 36)
@@ -33,22 +33,24 @@ struct AboutTabView: View {
     // MARK: - Hero
 
     private var hero: some View {
-        VStack(spacing: 14) {
-            AppIconHero(size: 128)
+        VStack(spacing: 12) {
+            AppIconHero(size: 108)
             Text("CyphrWhispr")
-                .font(SettingsDesign.krPageTitle(size: 32))
+                .font(SettingsDesign.krPageTitle(size: 28))
                 .foregroundStyle(SettingsDesign.textPrimary)
+                .padding(.top, 4)
             Text("v\(version) · Build \(build)")
-                .font(SettingsDesign.krCaption(size: 12))
+                .font(SettingsDesign.krCaption(size: 11.5))
                 .foregroundStyle(SettingsDesign.textTertiary)
-                .padding(.top, -4)
+                .padding(.top, -6)
             Text("A native macOS dictation widget — local, encrypted, and intentionally minimal. Press a key, speak, watch words land at your cursor.")
-                .font(SettingsDesign.krPageSubtitle(size: 13))
+                .font(SettingsDesign.krPageSubtitle(size: 12.5))
                 .foregroundStyle(SettingsDesign.textSecondary)
                 .multilineTextAlignment(.center)
+                .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 520)
-                .padding(.top, 6)
+                .frame(maxWidth: 480)
+                .padding(.top, 4)
         }
     }
 
@@ -82,12 +84,13 @@ struct AboutTabView: View {
             title: "Source",
             description: "github.com/KenobiNakamoto/CyphrWhispr"
         ) {
-            Button("View on GitHub") {
+            Button("[View on GitHub]") {
                 if let url = URL(string: "https://github.com/KenobiNakamoto/CyphrWhispr") {
                     NSWorkspace.shared.open(url)
                 }
             }
             .buttonStyle(NativeMacButtonStyle())
+            .accessibilityLabel("View source on GitHub")
         }
     }
 
@@ -191,7 +194,7 @@ private struct AccentSwatchRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             ForEach(Self.presets, id: \.hex) { preset in
                 SwatchButton(
                     color: Color(hex: preset.hex) ?? PreferencesStore.defaultAccent,
@@ -201,12 +204,12 @@ private struct AccentSwatchRow: View {
                     prefs.accentHex = preset.hex
                 }
             }
-            // System color picker for "I want something exact" — hidden
-            // behind a discreet trailing button so it doesn't dominate the
-            // curated row.
+            // System color picker for "I want something exact" — sits at
+            // the end of the curated row so the row reads as
+            // "presets + custom" left-to-right.
             ColorPicker("Custom accent", selection: colorBinding, supportsOpacity: false)
                 .labelsHidden()
-                .frame(width: 28, height: 28)
+                .frame(width: 24, height: 24)
                 .help("Pick a custom accent color")
         }
     }
@@ -222,25 +225,22 @@ private struct SwatchButton: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [color.opacity(0.95), color],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [color.opacity(0.95), color],
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.white.opacity(isSelected ? 1.0 : 0.18),
-                                          lineWidth: isSelected ? 2 : 1)
-                    )
-                    .shadow(color: color.opacity(isSelected ? 0.70 : 0.0),
-                            radius: isSelected ? 10 : 0, x: 0, y: 0)
-                    .frame(width: isSelected ? 30 : 26,
-                           height: isSelected ? 30 : 26)
-            }
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(isSelected ? 1.0 : 0.16),
+                                      lineWidth: isSelected ? 1.8 : 1)
+                )
+                .shadow(color: color.opacity(isSelected ? 0.60 : 0.0),
+                        radius: isSelected ? 8 : 0, x: 0, y: 0)
+                .frame(width: 24, height: 24)
         }
         .buttonStyle(.plain)
         .help(label)

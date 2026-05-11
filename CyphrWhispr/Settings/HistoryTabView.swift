@@ -1,26 +1,27 @@
 import SwiftUI
 
 /// Settings → History. Encrypted transcription history. Phase 4 of the v1
-/// plan introduces the real SQLCipher-backed store + BIP-39 unlock; for now
-/// this tab is a "coming soon" placeholder that shows the visual structure
-/// (rows of past dictations with timestamp + source app) so the user
-/// understands what the feature will look like once it's wired up.
+/// plan brings the SQLCipher-backed store + BIP-39 unlock; until that lands
+/// this tab shows demo entries (clearly labelled in the page subtitle) so
+/// the user knows what the feature will look like — and so the visual
+/// structure is in place to drop the real store into.
 ///
-/// The placeholder examples are clearly fictional — the timestamps reference
-/// a release date and the contents read like a developer's reminder list.
-/// We don't store any real history yet.
+/// Two design decisions:
+///   • No loud "PHASE 4 / coming soon" banner — the page subtitle quietly
+///     calls out that the entries are demo data and the rows are styled to
+///     read at full opacity. Saves vertical real estate and avoids
+///     screaming "incomplete" at the user.
+///   • Real rows render at full opacity in the eventual implementation;
+///     for now we soften them by ~10% so they don't claim to be authentic
+///     history.
 struct HistoryTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
 
     var body: some View {
         SettingsTabContainer(
             title: "History",
-            subtitle: "Encrypted with your BIP-39 passphrase. Searchable, never logged off-device."
+            subtitle: "Encrypted with your BIP-39 passphrase. Searchable, never logged off-device. — Demo entries; encrypted store ships in v0.5."
         ) {
-            // Coming-soon banner — important up front so we don't pretend
-            // the placeholder rows are real history.
-            comingSoonBanner
-
             SettingsCard {
                 VStack(spacing: 0) {
                     ForEach(Array(Self.placeholderEntries.enumerated()), id: \.offset) { index, entry in
@@ -31,33 +32,13 @@ struct HistoryTabView: View {
                     }
                 }
             }
-            .opacity(0.85) // softens the placeholder; reads as inactive
+            .opacity(0.92)
         }
-    }
-
-    private var comingSoonBanner: some View {
-        HStack(spacing: 12) {
-            TerminalBadge(label: "PHASE 4", glyph: "▴", tint: prefs.accent)
-            Text("Encrypted history lands in v0.5 — BIP-39 passphrase, FTS5 search, SQLCipher store.")
-                .font(SettingsDesign.krCaption(size: 12))
-                .foregroundStyle(SettingsDesign.textSecondary)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(prefs.accent.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(prefs.accent.opacity(0.35), lineWidth: 1)
-                )
-        )
     }
 
     /// Stand-in entries shown before the real store is wired. Picked to
     /// look like a developer's actual dictation output — mixed apps, mixed
-    /// content types. Matches the mockup exactly.
+    /// content types. Mirrors the mockup exactly.
     private static let placeholderEntries: [HistoryEntry] = [
         HistoryEntry(
             text: "Hey, can you push the latest changes to the feature branch and tag the release as v0.4.0-alpha tonight?",
@@ -104,14 +85,16 @@ private struct HistoryEntryRow: View {
             Text(entry.text)
                 .font(SettingsDesign.krBody(size: 13))
                 .foregroundStyle(SettingsDesign.textPrimary)
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
-            // Metadata: date · time · app, joined by middle-dots.
+            // Metadata: date · time · app, joined by middle-dots. Tertiary
+            // colour so it recedes visually behind the transcript text.
             Text("\(entry.date) · \(entry.time) · \(entry.app)")
                 .font(SettingsDesign.krCaption(size: 11))
                 .foregroundStyle(SettingsDesign.textTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, SettingsDesign.rowPaddingHorizontal)
+        .padding(.vertical, SettingsDesign.rowPaddingVertical)
     }
 }

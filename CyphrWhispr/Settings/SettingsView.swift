@@ -101,19 +101,21 @@ private struct Sidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // "SETTINGS" header — tracked-out and dim, anchors the top of the
-            // sidebar.
+            // "SETTINGS" header — tracked-out and dim, anchors the top of
+            // the sidebar. Top padding matches the mockup's ~26pt offset
+            // from the start of the sidebar.
             Text("SETTINGS")
                 .font(SettingsDesign.krSidebarHeader())
                 .tracking(2.4)
                 .foregroundStyle(SettingsDesign.sidebarHeader)
-                .padding(.horizontal, 24)
-                .padding(.top, 22)
-                .padding(.bottom, 14)
+                .padding(.horizontal, 22)
+                .padding(.top, 26)
+                .padding(.bottom, 16)
 
-            // The five fixed nav items, in mockup order. Tight 2pt spacing
-            // — the row itself supplies vertical padding for breathing room.
-            VStack(spacing: 2) {
+            // Five fixed nav items, in mockup order. 4pt inter-row spacing
+            // — combined with the row's 36pt height that gives the ~40pt
+            // rhythm the mockup uses.
+            VStack(spacing: 4) {
                 ForEach(SettingsView.Tab.allCases) { tab in
                     SidebarRow(
                         title: tab.rawValue,
@@ -205,20 +207,22 @@ private struct SidebarRow: View {
 
 // MARK: - Tab content header
 
-/// Shared page header used at the top of every tab — page title (~22pt) and
-/// secondary subtitle line. Sized + spaced to match the mockup hierarchy.
+/// Shared page header used at the top of every tab — page title and secondary
+/// subtitle line. Sized + spaced to match the mockup hierarchy. The title
+/// size is calibrated so descenders never crowd the subtitle.
 struct SettingsPageHeader: View {
     let title: String
     let subtitle: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(SettingsDesign.krPageTitle(size: 30))
+                .font(SettingsDesign.krPageTitle(size: 26))
                 .foregroundStyle(SettingsDesign.textPrimary)
             Text(subtitle)
-                .font(SettingsDesign.krPageSubtitle(size: 13))
+                .font(SettingsDesign.krPageSubtitle(size: 12.5))
                 .foregroundStyle(SettingsDesign.textSecondary)
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -227,7 +231,8 @@ struct SettingsPageHeader: View {
 
 /// A shared per-tab container. Provides consistent horizontal margins, the
 /// page header, and a scrollable body. Used by every tab so the layout is
-/// uniform.
+/// uniform. All inter-element gaps come from `SettingsDesign` tokens so
+/// the rhythm is consistent.
 struct SettingsTabContainer<Body_: View>: View {
     let title: String
     let subtitle: String
@@ -235,14 +240,16 @@ struct SettingsTabContainer<Body_: View>: View {
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: SettingsDesign.cardSpacing) {
                 SettingsPageHeader(title: title, subtitle: subtitle)
+                    .padding(.bottom, SettingsDesign.pageHeaderToFirstCard
+                                       - SettingsDesign.cardSpacing)
                 content()
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 40)
-            .padding(.top, 36)
-            .padding(.bottom, 32)
+            .padding(.horizontal, 36)
+            .padding(.top, 32)
+            .padding(.bottom, 28)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

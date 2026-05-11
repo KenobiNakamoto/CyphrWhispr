@@ -77,10 +77,11 @@ struct ShortcutTabView: View {
             title: "Per-app overrides",
             description: "Disable the hotkey in apps that conflict (e.g. Terminal sessions, Stream Deck profiles)."
         ) {
-            Button("Configure…") {
+            Button("[Configure…]") {
                 showPerAppAlert = true
             }
             .buttonStyle(NativeMacButtonStyle())
+            .accessibilityLabel("Configure per-app overrides")
         }
     }
 }
@@ -90,25 +91,27 @@ struct ShortcutTabView: View {
 /// Wraps the `KeyboardShortcuts.Recorder` in our own accent-bordered shell.
 /// The library renders the active key chord as its own NSView (we can't
 /// re-render those keycaps), so we sit it inside a rounded outline + soft
-/// glow that visually matches the mockup's three-keycap field.
+/// accent glow that visually matches the mockup's three-keycap field. The
+/// glow tints with the user's chosen accent so the recorder remains the
+/// most accent-tinted control on the Shortcut tab.
 private struct ShortcutRecorderField: View {
     @EnvironmentObject private var prefs: PreferencesStore
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.black.opacity(0.25))
+                .fill(Color.black.opacity(0.22))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(prefs.accent.opacity(0.65), lineWidth: 1.5)
+                        .strokeBorder(prefs.accent.opacity(0.55), lineWidth: 1.3)
                 )
-                .shadow(color: prefs.accent.opacity(0.35), radius: 10, x: 0, y: 0)
+                .shadow(color: prefs.accent.opacity(0.32), radius: 8, x: 0, y: 0)
 
             KeyboardShortcuts.Recorder("", name: .toggleDictation)
                 .controlSize(.large)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
         }
-        .frame(width: 220, height: 48)
+        .frame(width: 200, height: 42)
     }
 }

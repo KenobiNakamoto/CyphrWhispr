@@ -69,45 +69,17 @@ struct GeneralTabView: View {
             title: "Activation mode",
             description: "How the hotkey starts and stops a dictation session."
         ) {
-            // SwiftUI's `Menu` renders as a pull-down with the current value
-            // and a chevron — visually the closest match to the mockup's
-            // "Push to talk ˅" dropdown.
-            Menu {
-                ForEach(PreferencesStore.ActivationMode.allCases) { mode in
-                    Button {
+            DropdownButton(
+                currentLabel: prefs.activationMode.displayName,
+                options: PreferencesStore.ActivationMode.allCases.map { mode in
+                    DropdownOption(
+                        label: mode.displayName,
+                        isSelected: prefs.activationMode == mode
+                    ) {
                         prefs.activationMode = mode
-                    } label: {
-                        HStack {
-                            Text(mode.displayName)
-                            if prefs.activationMode == mode {
-                                Image(systemName: "checkmark")
-                            }
-                        }
                     }
                 }
-            } label: {
-                HStack(spacing: 8) {
-                    Text(prefs.activationMode.displayName)
-                        .font(SettingsDesign.krBody(size: 13, weight: .medium))
-                        .foregroundStyle(SettingsDesign.textPrimary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(SettingsDesign.textSecondary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.05))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(SettingsDesign.divider, lineWidth: 1)
-                        )
-                )
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            )
         }
     }
 
@@ -116,11 +88,56 @@ struct GeneralTabView: View {
             title: "Dictation language",
             description: dictationLanguageHint
         ) {
-            GeneralLanguageMenu(
-                selectedCode: $prefs.selectedLanguageCode,
+            DropdownButton(
+                currentLabel: currentLanguageDisplay,
+                options: languageDropdownOptions,
                 enabled: prefs.activeModelSupportsLanguageChoice
             )
         }
+    }
+
+    private var currentLanguageDisplay: String {
+        switch prefs.selectedLanguageCode {
+        case TranscriptionLanguageMode.autoCode:           return "Auto-detect"
+        case TranscriptionLanguageMode.autoPerPhraseCode:  return "Auto — per phrase"
+        default:
+            return TranscriptionLanguageCatalog.language(for: prefs.selectedLanguageCode)?.displayName
+                ?? prefs.selectedLanguageCode
+        }
+    }
+
+    /// Catalog of options for the language pull-down. Two auto modes at the
+    /// top, then the full curated language catalog in catalog order.
+    private var languageDropdownOptions: [DropdownOption] {
+        var opts: [DropdownOption] = []
+        opts.append(
+            DropdownOption(
+                label: "Auto-detect — lock per session",
+                isSelected: prefs.selectedLanguageCode == TranscriptionLanguageMode.autoCode
+            ) {
+                prefs.selectedLanguageCode = TranscriptionLanguageMode.autoCode
+            }
+        )
+        opts.append(
+            DropdownOption(
+                label: "Auto-detect — per phrase (experimental)",
+                isSelected: prefs.selectedLanguageCode == TranscriptionLanguageMode.autoPerPhraseCode
+            ) {
+                prefs.selectedLanguageCode = TranscriptionLanguageMode.autoPerPhraseCode
+            }
+        )
+        for lang in TranscriptionLanguageCatalog.supported {
+            let label = lang.nativeName.map { "\(lang.displayName) — \($0)" } ?? lang.displayName
+            opts.append(
+                DropdownOption(
+                    label: label,
+                    isSelected: prefs.selectedLanguageCode == lang.code
+                ) {
+                    prefs.selectedLanguageCode = lang.code
+                }
+            )
+        }
+        return opts
     }
 
     /// Caption under the language row — same logic as the old language card
@@ -148,8 +165,9 @@ struct GeneralTabView: View {
         ) {
             HStack(spacing: 10) {
                 if prefs.polishEnabled {
-                    Button("Customise…") { showPolishPromptSheet = true }
+                    Button("[Customise…]") { showPolishPromptSheet = true }
                         .buttonStyle(NativeMacButtonStyle())
+                        .accessibilityLabel("Customise polish prompt")
                 }
                 Toggle("", isOn: $prefs.polishEnabled)
                     .labelsHidden()
@@ -169,98 +187,6 @@ struct GeneralTabView: View {
                 .foregroundStyle(SettingsDesign.textSecondary)
                 .multilineTextAlignment(.trailing)
         }
-    }
-}
-
-// MARK: - Language menu (used in General tab)
-
-/// Pull-down picker — same data + behaviour as the legacy
-/// `LanguagePickerMenu` from Models, restyled to match the General-tab
-/// "row trailing control" idiom (smaller chevron treatment, fitted width).
-struct GeneralLanguageMenu: View {
-    @Binding var selectedCode: String
-    let enabled: Bool
-
-    var body: some View {
-        Menu {
-            // Two auto-detect modes at the top.
-            Button {
-                selectedCode = TranscriptionLanguageMode.autoCode
-            } label: {
-                autoRowLabel(
-                    title: "Auto-detect — lock per session",
-                    isSelected: selectedCode == TranscriptionLanguageMode.autoCode
-                )
-            }
-            Button {
-                selectedCode = TranscriptionLanguageMode.autoPerPhraseCode
-            } label: {
-                autoRowLabel(
-                    title: "Auto-detect — per phrase (experimental)",
-                    isSelected: selectedCode == TranscriptionLanguageMode.autoPerPhraseCode
-                )
-            }
-
-            Divider()
-
-            ForEach(TranscriptionLanguageCatalog.supported) { lang in
-                Button {
-                    selectedCode = lang.code
-                } label: {
-                    rowLabel(for: lang, isSelected: selectedCode == lang.code)
-                }
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Text(currentDisplay)
-                    .font(SettingsDesign.krBody(size: 13, weight: .medium))
-                    .foregroundStyle(enabled ? SettingsDesign.textPrimary : SettingsDesign.textTertiary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(enabled ? SettingsDesign.textSecondary : SettingsDesign.textTertiary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(enabled ? 0.05 : 0.02))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(SettingsDesign.divider.opacity(enabled ? 1.0 : 0.5),
-                                          lineWidth: 1)
-                    )
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .disabled(!enabled)
-        .fixedSize()
-    }
-
-    private var currentDisplay: String {
-        switch selectedCode {
-        case TranscriptionLanguageMode.autoCode:           return "Auto-detect"
-        case TranscriptionLanguageMode.autoPerPhraseCode:  return "Auto — per phrase"
-        default:
-            return TranscriptionLanguageCatalog.language(for: selectedCode)?.displayName ?? selectedCode
-        }
-    }
-
-    @ViewBuilder
-    private func rowLabel(for lang: TranscriptionLanguage, isSelected: Bool) -> some View {
-        if let native = lang.nativeName {
-            Text("\(lang.displayName) — \(native)")
-        } else {
-            Text(lang.displayName)
-        }
-        if isSelected { Image(systemName: "checkmark") }
-    }
-
-    @ViewBuilder
-    private func autoRowLabel(title: String, isSelected: Bool) -> some View {
-        Text(title)
-        if isSelected { Image(systemName: "checkmark") }
     }
 }
 

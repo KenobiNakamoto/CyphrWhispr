@@ -40,10 +40,12 @@ struct ModelsTabView: View {
                 }
             }
 
-            // Footer: import button + storage path (read-only).
+            // Footer: import button + storage path (read-only). Path
+            // collapses `$HOME` to `~` to keep the line scannable.
             HStack(spacing: 14) {
-                Button("Import custom model…") { manager.importCustomModel() }
+                Button("[Import custom model…]") { manager.importCustomModel() }
                     .buttonStyle(NativeMacButtonStyle())
+                    .accessibilityLabel("Import custom model")
                 Spacer()
                 Text(AppSupportPaths.modelsRoot.path.replacingOccurrences(
                     of: NSHomeDirectory(), with: "~"))
@@ -52,7 +54,7 @@ struct ModelsTabView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            .padding(.top, 4)
+            .padding(.top, 2)
         }
         .onAppear { manager.refresh() }
     }
@@ -75,15 +77,15 @@ private struct ModelRowView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 titleLine
                 metadataLine
             }
-            Spacer(minLength: 12)
+            Spacer(minLength: 14)
             actionButton
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.horizontal, SettingsDesign.rowPaddingHorizontal)
+        .padding(.vertical, SettingsDesign.rowPaddingVertical)
         .background(
             isActive
                 ? prefs.accent.opacity(0.10)
@@ -100,12 +102,13 @@ private struct ModelRowView: View {
     }
 
     /// Row title — model display name + bracketed status badge. Two badge
-    /// variants: `[ ▪ ACTIVE ]` (purple) for the currently-selected model,
+    /// variants: `[ ▪ ACTIVE ]` (accent) for the currently-selected model,
     /// or the download status badge (downloaded / not installed) otherwise.
+    /// Baseline-aligned so badges sit visually centred with the text.
     private var titleLine: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(row.displayName)
-                .font(SettingsDesign.krBody(size: 15, weight: .semibold))
+                .font(SettingsDesign.krBody(size: 14.5, weight: .semibold))
                 .foregroundStyle(SettingsDesign.textPrimary)
 
             if isActive {
@@ -166,15 +169,18 @@ private struct ModelRowView: View {
     @ViewBuilder
     private var actionButton: some View {
         if isActive {
-            Button("In use") {}
+            Button("[In use]") {}
                 .buttonStyle(NativeMacButtonStyle())
                 .disabled(true)
+                .accessibilityLabel("Currently in use")
         } else if row.isDownloaded {
-            Button("Switch") { onSelect() }
+            Button("[Switch]") { onSelect() }
                 .buttonStyle(NativeMacButtonStyle())
+                .accessibilityLabel("Switch to this model")
         } else {
-            Button("Download") { onSelect() }
+            Button("[Download]") { onSelect() }
                 .buttonStyle(NativeMacButtonStyle())
+                .accessibilityLabel("Download this model")
         }
     }
 }

@@ -63,6 +63,25 @@ enum SettingsDesign {
     /// touched, the runtime accent takes over.
     static let sidebarAccentDefault = Color(red: 0.490, green: 0.294, blue: 1.000)
 
+    // MARK: - Spacing scale
+    //
+    // 8pt grid throughout — every spacing decision in Settings derives from
+    // one of these constants. Keeps the visual rhythm consistent across tabs
+    // and makes future polish a single-constant edit.
+
+    /// Gap between cards in a tab. Mockup rhythm.
+    static let cardSpacing: CGFloat = 16
+    /// Gap between the page header and the first card.
+    static let pageHeaderToFirstCard: CGFloat = 22
+    /// Horizontal padding inside a card row.
+    static let rowPaddingHorizontal: CGFloat = 22
+    /// Vertical padding inside a card row.
+    static let rowPaddingVertical: CGFloat = 18
+    /// Outer card corner radius.
+    static let cardCornerRadius: CGFloat = 12
+    /// Outer card border width.
+    static let cardBorderWidth: CGFloat = 1
+
     /// Card stroke alias kept for back-compat with `SettingsCard` callers.
     /// Same color as `divider` — both are the same #2A2A32 hairline.
     static let cardStroke = divider
@@ -167,12 +186,13 @@ enum SettingsDesign {
 // MARK: - Card
 
 /// The shared rounded card that wraps each tab's content sections. Flat dark
-/// fill + 1pt hairline border in the divider color — matches the mockup's
-/// "raised slate" look without any drop shadow or blur.
+/// fill + hairline border in the divider color — matches the mockup's
+/// "raised slate" look without any drop shadow or blur. Defaults pulled from
+/// the design tokens so future tweaks ripple through every tab.
 struct SettingsCard<Content: View>: View {
     @ViewBuilder let content: () -> Content
     var padding: CGFloat = 0
-    var cornerRadius: CGFloat = 16
+    var cornerRadius: CGFloat = SettingsDesign.cardCornerRadius
 
     var body: some View {
         content()
@@ -184,14 +204,17 @@ struct SettingsCard<Content: View>: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(SettingsDesign.cardStroke, lineWidth: 1)
+                    .strokeBorder(SettingsDesign.cardStroke,
+                                  lineWidth: SettingsDesign.cardBorderWidth)
             )
     }
 }
 
 /// A row inside a `SettingsCard` — title + description on the left, free-form
 /// trailing content (toggle, dropdown, button, badges) on the right.
-/// Vertical padding matches the mockup's generous breathing room.
+/// Vertical padding matches the mockup's generous breathing room. Uses
+/// the shared spacing tokens so every row in every tab reads at the same
+/// rhythm.
 struct CardRow<Trailing: View>: View {
     let title: String
     let description: String?
@@ -201,20 +224,21 @@ struct CardRow<Trailing: View>: View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(SettingsDesign.krBody(size: 14, weight: .medium))
+                    .font(SettingsDesign.krBody(size: 13.5, weight: .medium))
                     .foregroundStyle(SettingsDesign.textPrimary)
                 if let description, !description.isEmpty {
                     Text(description)
-                        .font(SettingsDesign.krCaption(size: 12))
+                        .font(SettingsDesign.krCaption(size: 11.5))
                         .foregroundStyle(SettingsDesign.textSecondary)
+                        .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 12)
+            Spacer(minLength: 14)
             trailing()
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, SettingsDesign.rowPaddingHorizontal)
+        .padding(.vertical, SettingsDesign.rowPaddingVertical)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -232,8 +256,9 @@ struct CardRowDivider: View {
 // MARK: - Bracketed terminal badge
 
 /// `[ ↓ DOWNLOADED ]`-style badge. The literal square brackets are rendered as
-/// text so they sit inline with the label — that's the retro-terminal cue. A
-/// thin border in the accent color wraps the whole thing.
+/// text so they sit inline with the label — that's the retro-terminal cue.
+/// A thin border in the accent color wraps the whole thing. Letter-spaced
+/// for a typographic "stamp" feel.
 struct TerminalBadge: View {
     let label: String
     /// Optional leading glyph rendered between the opening bracket and the
@@ -241,33 +266,33 @@ struct TerminalBadge: View {
     /// label-only badge like `[ ACTIVE ]`.
     var glyph: String?
     let tint: Color
+    /// Size of the badge text. Smaller for inline-with-title contexts
+    /// (Models / About), larger for stand-alone use.
+    var size: CGFloat = 10.5
 
     var body: some View {
         HStack(spacing: 6) {
             Text("[")
-                .font(SettingsDesign.krBadge())
-                .foregroundStyle(tint)
+                .foregroundStyle(tint.opacity(0.85))
             if let glyph {
                 Text(glyph)
-                    .font(SettingsDesign.krBadge())
                     .foregroundStyle(tint)
             }
             Text(label)
-                .font(SettingsDesign.krBadge())
                 .foregroundStyle(tint)
-                .tracking(0.5)
+                .tracking(0.8)
             Text("]")
-                .font(SettingsDesign.krBadge())
-                .foregroundStyle(tint)
+                .foregroundStyle(tint.opacity(0.85))
         }
+        .font(SettingsDesign.krBadge(size: size))
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3.5)
         .background(
             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color.white.opacity(0.03))
+                .fill(tint.opacity(0.06))
                 .overlay(
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .strokeBorder(tint.opacity(0.50), lineWidth: 1)
+                        .strokeBorder(tint.opacity(0.45), lineWidth: 1)
                 )
         )
     }
@@ -276,27 +301,36 @@ struct TerminalBadge: View {
 // MARK: - Native macOS button
 
 /// Deliberately-plain white macOS-style button. Used for the action buttons in
-/// each row ([Switch], [In use], [Download], [Configure…], [View on GitHub],
-/// etc). The retro-terminal aesthetic everywhere else makes these buttons
-/// stand out as the clickable affordances — same trick as Tailscale's macOS
-/// settings.
+/// each row (`[Switch]`, `[In use]`, `[Download]`, `[Configure…]`, etc).
+/// The retro-terminal aesthetic everywhere else makes these buttons stand
+/// out as the clickable affordances — same trick as Tailscale's macOS
+/// settings. Per the design spec, the literal square brackets are baked
+/// into the label text by the caller.
 struct NativeMacButtonStyle: ButtonStyle {
-    var prominent: Bool = false
+    @Environment(\.isEnabled) private var isEnabled: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: .regular))
-            .foregroundStyle(Color(red: 0.067, green: 0.067, blue: 0.067))
-            .padding(.horizontal, 12)
+            .foregroundStyle(
+                isEnabled
+                    ? Color(red: 0.067, green: 0.067, blue: 0.067)
+                    : Color(red: 0.45, green: 0.45, blue: 0.45)
+            )
+            .padding(.horizontal, 11)
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(configuration.isPressed
-                          ? Color(red: 0.85, green: 0.85, blue: 0.85)
-                          : Color(red: 0.95, green: 0.95, blue: 0.95))
+                    .fill(
+                        isEnabled
+                            ? (configuration.isPressed
+                                ? Color(red: 0.82, green: 0.82, blue: 0.82)
+                                : Color(red: 0.95, green: 0.95, blue: 0.95))
+                            : Color(red: 0.86, green: 0.86, blue: 0.86)
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .strokeBorder(Color(red: 0.72, green: 0.72, blue: 0.72),
+                            .strokeBorder(Color(red: 0.70, green: 0.70, blue: 0.70),
                                           lineWidth: 0.5)
                     )
             )
@@ -322,6 +356,71 @@ struct GhostButtonStyle: ButtonStyle {
                     )
             )
             .contentShape(Capsule())
+    }
+}
+
+// MARK: - Dropdown button
+
+/// Compact pull-down used for any "pick one from a small list" row in
+/// Settings (Activation mode, Dictation language, etc). Consistent styling
+/// — soft white fill, hairline border, chevron on the right — so different
+/// tabs don't end up with subtly different dropdowns.
+struct DropdownOption: Identifiable {
+    let id = UUID()
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+}
+
+struct DropdownButton: View {
+    let currentLabel: String
+    let options: [DropdownOption]
+    /// When false, renders dimmed and ignores clicks. The trigger still
+    /// shows so the affordance is visible.
+    var enabled: Bool = true
+
+    var body: some View {
+        Menu {
+            ForEach(options) { option in
+                Button(action: option.action) {
+                    HStack {
+                        Text(option.label)
+                        if option.isSelected {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(currentLabel)
+                    .font(SettingsDesign.krBody(size: 12.5, weight: .medium))
+                    .foregroundStyle(enabled
+                                     ? SettingsDesign.textPrimary
+                                     : SettingsDesign.textTertiary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(enabled
+                                     ? SettingsDesign.textSecondary
+                                     : SettingsDesign.textTertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.white.opacity(enabled ? 0.05 : 0.02))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(SettingsDesign.divider.opacity(enabled ? 1.0 : 0.4),
+                                          lineWidth: 1)
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .disabled(!enabled)
+        .fixedSize()
     }
 }
 
