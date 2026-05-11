@@ -21,6 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        // Touch the launch-at-login service so its init reconciles
+        // SMAppService.mainApp.status with our prefs, and subscribes to
+        // pref-change notifications for the rest of the session.
+        _ = LaunchAtLoginService.shared
         coordinator.start()
     }
 
