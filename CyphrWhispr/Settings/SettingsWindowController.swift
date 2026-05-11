@@ -29,15 +29,18 @@ final class SettingsWindowController {
                 .environmentObject(PreferencesStore.shared)
         )
         let window = NSWindow(contentViewController: host)
-        window.title = "CyphrWhispr Settings"
+        window.title = "CyphrWhispr — Settings"
         // .resizable lets the user drag the window edges; .fullSizeContentView
-        // lets the SwiftUI gradient extend up behind the transparent titlebar.
+        // lets the SwiftUI content extend up under the transparent titlebar.
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.isReleasedWhenClosed = false
-        // Dark, transparent titlebar so the SwiftUI gradient bleeds up behind
-        // the traffic lights — matches the design screenshots.
+        // Hide the system title — SettingsView draws its own centred title
+        // strip inside the content area so the title centres exactly above
+        // the sidebar / content split (macOS won't centre titles in
+        // `.fullSizeContentView` windows; it left-aligns them next to the
+        // traffic lights).
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = .visible
+        window.titleVisibility = .hidden
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(SettingsDesign.pageBackground)
         window.isMovableByWindowBackground = true

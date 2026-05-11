@@ -52,6 +52,17 @@ enum SettingsDesign {
     /// Sidebar header label colour (the "SETTINGS" caps). Hex #8A8A92.
     static let sidebarHeader = Color(red: 0.541, green: 0.541, blue: 0.573)
 
+    /// Sidebar selection pill fill. Hardcoded from the mockup spec (#241F3B)
+    /// rather than derived from the user's accent — the pill needs to read
+    /// the same way regardless of which accent colour the user picks. The
+    /// dot + left bar still use the accent so personal customisation has
+    /// visible presence in the sidebar.
+    static let sidebarSelectionFill = Color(red: 0.141, green: 0.122, blue: 0.231)
+    /// Mockup-spec purple. Used for the active-row dot and left bar when
+    /// the user hasn't customised their accent. Once the accent picker is
+    /// touched, the runtime accent takes over.
+    static let sidebarAccentDefault = Color(red: 0.490, green: 0.294, blue: 1.000)
+
     /// Card stroke alias kept for back-compat with `SettingsCard` callers.
     /// Same color as `divider` — both are the same #2A2A32 hairline.
     static let cardStroke = divider
