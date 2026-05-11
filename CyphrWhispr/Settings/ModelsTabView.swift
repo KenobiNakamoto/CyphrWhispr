@@ -174,19 +174,24 @@ struct ModelsTabView: View {
     }
 
     /// Caption under the "Dictation language" label. Tracks the active
-    /// model's English-only state so the message either reads as
-    /// instructional ("multilingual model required") or descriptive
-    /// ("auto-detect locks per session").
+    /// model's English-only state + the chosen detection mode so the
+    /// message reads as either instructional ("multilingual model
+    /// required") or descriptive (what auto/per-phrase/pinned does).
     private var languageHintText: String {
         if !prefs.activeModelSupportsLanguageChoice {
             return "Switch to a multilingual model below to enable language selection."
         }
-        let code = prefs.selectedLanguageCode
-        if code == TranscriptionLanguageMode.autoCode {
+        switch prefs.selectedLanguageCode {
+        case TranscriptionLanguageMode.autoCode:
             return "Whisper detects the language from the first second of audio, then locks it for the rest of the session."
+        case TranscriptionLanguageMode.autoPerPhraseCode:
+            // Be honest about the limits: phrase-level switching works at
+            // natural pauses; word-level mid-utterance switching doesn't.
+            return "Re-detects language after each natural pause. Code-switching between phrases works; switching within a single uninterrupted phrase will pick one language."
+        default:
+            let name = TranscriptionLanguageCatalog.language(for: prefs.selectedLanguageCode)?.displayName ?? prefs.selectedLanguageCode
+            return "Pinned to \(name). Highest accuracy — no detection penalty."
         }
-        let name = TranscriptionLanguageCatalog.language(for: code)?.displayName ?? code
-        return "Pinned to \(name). Highest accuracy — no detection penalty."
     }
 }
 
@@ -203,11 +208,26 @@ private struct LanguagePickerMenu: View {
 
     var body: some View {
         Menu {
-            // Auto pinned at the top — the friendly default for multilingual users.
+            // The two auto-detect modes pinned at the top. "Lock per
+            // session" is the safer default; "Per phrase" is the polyglot
+            // option (experimental — re-detects at every commit so users
+            // who code-switch between phrases can get each phrase in its
+            // own language).
             Button {
                 selectedCode = TranscriptionLanguageMode.autoCode
             } label: {
-                rowLabel(for: TranscriptionLanguageCatalog.auto, isSelected: selectedCode == TranscriptionLanguageMode.autoCode)
+                autoRowLabel(
+                    title: "Auto-detect — lock per session",
+                    isSelected: selectedCode == TranscriptionLanguageMode.autoCode
+                )
+            }
+            Button {
+                selectedCode = TranscriptionLanguageMode.autoPerPhraseCode
+            } label: {
+                autoRowLabel(
+                    title: "Auto-detect — per phrase (experimental)",
+                    isSelected: selectedCode == TranscriptionLanguageMode.autoPerPhraseCode
+                )
             }
 
             Divider()
@@ -247,14 +267,19 @@ private struct LanguagePickerMenu: View {
     }
 
     private var currentLanguageDisplay: String {
-        if selectedCode == TranscriptionLanguageMode.autoCode {
+        switch selectedCode {
+        case TranscriptionLanguageMode.autoCode:
             return "Auto-detect"
+        case TranscriptionLanguageMode.autoPerPhraseCode:
+            return "Auto — per phrase"
+        default:
+            return TranscriptionLanguageCatalog.language(for: selectedCode)?.displayName ?? selectedCode
         }
-        return TranscriptionLanguageCatalog.language(for: selectedCode)?.displayName ?? selectedCode
     }
 
-    /// Menu row formatter — display name + native script subtitle (when
-    /// different) + checkmark on the active selection.
+    /// Menu row formatter for a specific language — display name + native
+    /// script subtitle (when different from the English name) + checkmark
+    /// on the active selection.
     @ViewBuilder
     private func rowLabel(for lang: TranscriptionLanguage, isSelected: Bool) -> some View {
         if let native = lang.nativeName {
@@ -262,6 +287,17 @@ private struct LanguagePickerMenu: View {
         } else {
             Text(lang.displayName)
         }
+        if isSelected {
+            Image(systemName: "checkmark")
+        }
+    }
+
+    /// Menu row for the auto-detect variants. Plain title text + checkmark;
+    /// no native-name treatment because the row isn't a language per se,
+    /// it's a detection mode.
+    @ViewBuilder
+    private func autoRowLabel(title: String, isSelected: Bool) -> some View {
+        Text(title)
         if isSelected {
             Image(systemName: "checkmark")
         }

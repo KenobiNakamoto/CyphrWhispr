@@ -59,6 +59,12 @@ actor WhisperKitBackend: WhisperEngine {
     /// next session re-detects from scratch. `nil` means "haven't detected
     /// yet" (or we're not in auto mode — in which case `requestedLanguageCode`
     /// is the source of truth and this stays nil).
+    ///
+    /// In `autoDetectPerPhrase` mode this gets reset to nil after every
+    /// commit boundary, so the next transcribe re-runs LID. That's how
+    /// phrase-level code-switching is enabled: "Hola. [pause] Hello."
+    /// commits the Spanish segment, clears the lock, re-detects English
+    /// on the next transcribe, locks English until the next commit.
     private var sessionLockedLanguage: String?
 
     /// Audio is captured at 16 kHz mono Float32 by `AudioCaptureEngine`.
@@ -221,10 +227,12 @@ actor WhisperKitBackend: WhisperEngine {
     }
 
     /// `nil` if we should run language detection on the next transcribe,
-    /// otherwise the language code to pin. Auto mode resolves to the
-    /// session-locked code if we've already detected once.
+    /// otherwise the language code to pin. Both auto modes resolve to the
+    /// session-locked code if we've already detected once for the current
+    /// phrase. Per-phrase mode just resets the lock more aggressively
+    /// (after each commit, in `emitPartial`).
     private func effectivePinnedLanguage() -> String? {
-        if requestedLanguageCode == TranscriptionLanguageMode.autoCode {
+        if Self.isAutoMode(requestedLanguageCode) {
             return sessionLockedLanguage
         }
         return requestedLanguageCode
@@ -235,7 +243,7 @@ actor WhisperKitBackend: WhisperEngine {
     /// faster prefill path. Idempotent — only sets the lock if we're in
     /// auto mode and haven't locked yet.
     private func lockSessionLanguage(from results: [TranscriptionResult]) {
-        guard requestedLanguageCode == TranscriptionLanguageMode.autoCode,
+        guard Self.isAutoMode(requestedLanguageCode),
               sessionLockedLanguage == nil else { return }
         // TranscriptionResult.language is the detected code (when LID ran)
         // or the requested language (when prefilled). Take the first
@@ -243,6 +251,14 @@ actor WhisperKitBackend: WhisperEngine {
         if let detected = results.first(where: { !$0.language.isEmpty })?.language {
             sessionLockedLanguage = detected
         }
+    }
+
+    /// True for both auto-detect variants — locked-per-session and
+    /// per-phrase. Centralised so we never miss one of the two sentinels
+    /// when reasoning about whether to invoke language detection.
+    private static func isAutoMode(_ code: String) -> Bool {
+        code == TranscriptionLanguageMode.autoCode
+            || code == TranscriptionLanguageMode.autoPerPhraseCode
     }
 
     func finishStream() async throws -> String {
@@ -347,6 +363,17 @@ actor WhisperKitBackend: WhisperEngine {
                 let newText = Self.combineSegments(newCommittedSegs)
                 if !newText.isEmpty {
                     committedText = Self.joinSpaceAware(committedText, newText)
+                }
+                // Per-phrase mode: every successful commit ends a "phrase"
+                // from the user's POV (the audio for that phrase is dropped
+                // from the live buffer). Reset the language lock so the
+                // next transcribe re-runs LID and can pick a different
+                // language for the next phrase. This is what enables
+                // "Hola [pause] Hello [pause] Hallo" to be transcribed
+                // each phrase in its own language. The cost: every commit
+                // pays the LID penalty on the next transcribe.
+                if requestedLanguageCode == TranscriptionLanguageMode.autoPerPhraseCode {
+                    sessionLockedLanguage = nil
                 }
             }
 

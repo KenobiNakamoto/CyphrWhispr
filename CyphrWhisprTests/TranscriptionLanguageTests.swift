@@ -10,7 +10,12 @@ final class TranscriptionLanguageTests: XCTestCase {
 
     func testModeFromAutoSentinelString() {
         XCTAssertEqual(TranscriptionLanguageMode.from(persistedCode: "auto"),
-                       .autoDetect)
+                       .autoDetectLocked)
+    }
+
+    func testModeFromAutoPerPhraseSentinel() {
+        XCTAssertEqual(TranscriptionLanguageMode.from(persistedCode: "auto-per-phrase"),
+                       .autoDetectPerPhrase)
     }
 
     func testModeFromLanguageCode() {
@@ -18,15 +23,20 @@ final class TranscriptionLanguageTests: XCTestCase {
                        .forced(code: "es"))
     }
 
-    func testModeFromNilOrEmptyDefaultsToAuto() {
+    func testModeFromNilOrEmptyDefaultsToAutoLocked() {
         XCTAssertEqual(TranscriptionLanguageMode.from(persistedCode: nil),
-                       .autoDetect)
+                       .autoDetectLocked)
         XCTAssertEqual(TranscriptionLanguageMode.from(persistedCode: ""),
-                       .autoDetect)
+                       .autoDetectLocked)
     }
 
     func testPersistedCodeRoundTrip() {
-        for code in ["en", "es", "ja", "yue", TranscriptionLanguageMode.autoCode] {
+        let codes = [
+            "en", "es", "ja", "yue",
+            TranscriptionLanguageMode.autoCode,
+            TranscriptionLanguageMode.autoPerPhraseCode,
+        ]
+        for code in codes {
             let mode = TranscriptionLanguageMode.from(persistedCode: code)
             XCTAssertEqual(mode.persistedCode, code,
                            "round-trip failed for \(code)")
@@ -38,6 +48,38 @@ final class TranscriptionLanguageTests: XCTestCase {
         // wire format. Lock that in so a future refactor can't accidentally
         // emit something else and break existing UserDefaults.
         XCTAssertEqual(TranscriptionLanguageMode.englishOnly.persistedCode, "en")
+    }
+
+    // MARK: Auto-mode introspection helpers
+
+    func testIsAutoDetectFlag() {
+        XCTAssertTrue(TranscriptionLanguageMode.autoDetectLocked.isAutoDetect)
+        XCTAssertTrue(TranscriptionLanguageMode.autoDetectPerPhrase.isAutoDetect)
+        XCTAssertFalse(TranscriptionLanguageMode.englishOnly.isAutoDetect)
+        XCTAssertFalse(TranscriptionLanguageMode.forced(code: "es").isAutoDetect)
+    }
+
+    func testResetsLockOnCommitOnlyForPerPhrase() {
+        // Only the per-phrase variant should signal "reset lock on commit".
+        // Locked mode keeps the same language for the whole session.
+        XCTAssertTrue(TranscriptionLanguageMode.autoDetectPerPhrase.resetsLockOnCommit)
+        XCTAssertFalse(TranscriptionLanguageMode.autoDetectLocked.resetsLockOnCommit)
+        XCTAssertFalse(TranscriptionLanguageMode.englishOnly.resetsLockOnCommit)
+        XCTAssertFalse(TranscriptionLanguageMode.forced(code: "es").resetsLockOnCommit)
+    }
+
+    func testAutoPerPhraseCodeIsValid() {
+        XCTAssertTrue(TranscriptionLanguageCatalog.isValid(TranscriptionLanguageMode.autoPerPhraseCode))
+    }
+
+    func testBothAutoCodesResolveToSameDisplayEntry() {
+        // The per-phrase mode is the same "Auto-detect" choice from the
+        // user's POV — just different re-detection cadence under the hood.
+        // The catalog lookup for both should return the auto entry.
+        let lockedLang = TranscriptionLanguageCatalog.language(for: TranscriptionLanguageMode.autoCode)
+        let perPhraseLang = TranscriptionLanguageCatalog.language(for: TranscriptionLanguageMode.autoPerPhraseCode)
+        XCTAssertEqual(lockedLang?.code, "auto")
+        XCTAssertEqual(perPhraseLang?.code, "auto")
     }
 
     // MARK: - TranscriptionLanguageCatalog

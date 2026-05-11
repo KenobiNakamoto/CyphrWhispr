@@ -3,51 +3,84 @@ import Foundation
 /// User-facing language preference for transcription. Resolved at session
 /// start into the actual code WhisperKit accepts.
 ///
-/// Three modes, mirroring what every other live-dictation tool ships:
+/// Four modes, mirroring what every other live-dictation tool ships
+/// (plus a fourth we ship explicitly as an experimental polyglot option):
 ///   • `englishOnly` — pin to English. The default for `.en` model variants
 ///     and the only valid option when an English-only model is loaded.
 ///   • `forced(code:)` — pin to a specific language. The user knows which
 ///     language they'll dictate in this session and wants the highest-
 ///     accuracy path (no language-detection penalty, no flapping).
-///   • `autoDetect` — let Whisper's language-ID head pick from the first
-///     ~1.5 s of audio, then **lock** for the rest of the session. This
-///     is the friendly default for multilingual users; no other tool
-///     re-detects per utterance because Whisper-class models flap when
-///     they do.
+///   • `autoDetectLocked` — let Whisper's language-ID head pick from the
+///     first ~1.5 s of audio, then **lock** for the rest of the session.
+///     The friendly default for multilingual users.
+///   • `autoDetectPerPhrase` — re-detect language at every commit boundary
+///     (every ~6 s of dictation, anchored to where committed segments
+///     end). Enables phrase-level code-switching: "Hola. [pause] Now in
+///     English. [pause] Auf Deutsch" produces text in each respective
+///     language. Within a single uninterrupted phrase one language still
+///     wins — Whisper picks one language token per decode pass and
+///     can't switch mid-pass. Word-level mid-utterance switching
+///     ("¿qué tal, my friend?") is not reliably supported by any
+///     Whisper-class model today.
 ///
 /// The serialised form (what we put in UserDefaults) is a single string:
-///   • `"auto"` for autoDetect
+///   • `"auto"` for autoDetectLocked
+///   • `"auto-per-phrase"` for autoDetectPerPhrase
 ///   • `"en"`, `"es"`, … for forced(code:)
 /// Stored as `String` (not enum raw value) so the UserDefaults schema is
 /// human-debuggable and trivial to migrate.
 enum TranscriptionLanguageMode: Equatable, Hashable, Sendable {
     case englishOnly
     case forced(code: String)
-    case autoDetect
+    case autoDetectLocked
+    case autoDetectPerPhrase
 
     /// Persisted form for UserDefaults. `englishOnly` and `forced("en")`
     /// both serialise to `"en"` so we round-trip via `forced(code:)`.
     var persistedCode: String {
         switch self {
-        case .englishOnly:        return "en"
-        case .forced(let code):   return code
-        case .autoDetect:         return Self.autoCode
+        case .englishOnly:           return "en"
+        case .forced(let code):      return code
+        case .autoDetectLocked:      return Self.autoCode
+        case .autoDetectPerPhrase:   return Self.autoPerPhraseCode
         }
     }
 
-    /// Decode from the persisted string. `"auto"` → autoDetect,
-    /// anything else → forced(code:). englishOnly is reserved for the
-    /// view-model layer to use when an `.en`-only model is loaded — at
-    /// the persistence layer we only see `"en"` for English.
+    /// Decode from the persisted string. Unknown values fall back to
+    /// `autoDetectLocked` — the safest default for someone with
+    /// corrupted preferences. englishOnly is reserved for the view-model
+    /// layer to use when an `.en`-only model is loaded; at the persistence
+    /// layer we only see `"en"` for English.
     static func from(persistedCode raw: String?) -> TranscriptionLanguageMode {
-        guard let raw, !raw.isEmpty else { return .autoDetect }
-        if raw == autoCode { return .autoDetect }
+        guard let raw, !raw.isEmpty else { return .autoDetectLocked }
+        if raw == autoCode { return .autoDetectLocked }
+        if raw == autoPerPhraseCode { return .autoDetectPerPhrase }
         return .forced(code: raw)
     }
 
-    /// Sentinel string for the auto-detect mode. Avoid bare `"auto"`
-    /// scattered through the codebase.
+    /// Sentinel string for the auto-detect-and-lock mode. The historical
+    /// `"auto"` is preserved so old preference values keep working.
     static let autoCode = "auto"
+
+    /// Sentinel string for the per-phrase re-detection mode.
+    static let autoPerPhraseCode = "auto-per-phrase"
+
+    /// True if this is any auto-detect variant. Used by the engine layer
+    /// to decide whether to run language detection at all.
+    var isAutoDetect: Bool {
+        switch self {
+        case .autoDetectLocked, .autoDetectPerPhrase: return true
+        case .englishOnly, .forced: return false
+        }
+    }
+
+    /// True if the engine should re-detect language at every commit
+    /// boundary instead of locking after the first detection. Only the
+    /// per-phrase mode behaves this way.
+    var resetsLockOnCommit: Bool {
+        if case .autoDetectPerPhrase = self { return true }
+        return false
+    }
 }
 
 /// One pickable language entry. The `code` is a Whisper language code
@@ -165,13 +198,17 @@ enum TranscriptionLanguageCatalog {
 
     /// Lookup helper. `nil` for codes we don't recognise (e.g. an old
     /// preference set when we shipped fewer languages, or a manually-edited
-    /// UserDefaults value). Caller decides whether to fall back to auto.
+    /// UserDefaults value). Both auto sentinels resolve to the shared
+    /// `auto` display entry — the per-phrase mode is the same
+    /// "Auto-detect" choice from the user's POV, just with different
+    /// re-detection cadence.
     static func language(for code: String) -> TranscriptionLanguage? {
         if code == TranscriptionLanguageMode.autoCode { return auto }
+        if code == TranscriptionLanguageMode.autoPerPhraseCode { return auto }
         return supported.first { $0.code == code }
     }
 
-    /// True if `code` is one of our curated languages OR the auto sentinel.
+    /// True if `code` is one of our curated languages OR an auto sentinel.
     /// Used by PreferencesStore to validate persisted state on init.
     static func isValid(_ code: String) -> Bool {
         language(for: code) != nil
