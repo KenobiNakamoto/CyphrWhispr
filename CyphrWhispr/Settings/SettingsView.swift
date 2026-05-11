@@ -5,10 +5,11 @@ import SwiftUI
 /// fidelity mockup. The sidebar is always visible; selecting a row swaps in
 /// the matching tab view on the right.
 ///
-/// The look is deliberately retro-utility: dark slate background, monospaced
-/// pixel typography, soft purple pill behind the selected sidebar row with a
-/// thin left bar in the user's accent. Inspired by Tailscale / Shottr; cards
-/// and badges follow the design tokens in `SettingsDesign`.
+/// Look is intentionally retro-utility: dark slate background, monospaced
+/// pixel typography (Monaspace Krypton), a hardcoded soft purple pill behind
+/// the selected sidebar row with an accent-coloured left bar. Window has its
+/// own custom title strip so the title text is centred (macOS doesn't centre
+/// titles in `.titled` + `.fullSizeContentView` windows).
 struct SettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
         case general  = "General"
@@ -22,26 +23,55 @@ struct SettingsView: View {
     @State private var tab: Tab = .general
     @EnvironmentObject private var prefs: PreferencesStore
 
+    /// Fixed height for our drawn title strip. Matches the standard macOS
+    /// title bar height (28pt) so the centred title sits exactly in line
+    /// with the traffic lights and the sidebar / content panel start
+    /// immediately below — no extra empty band.
+    private static let titleStripHeight: CGFloat = 28
+
     var body: some View {
-        HStack(spacing: 0) {
-            Sidebar(selection: $tab)
-                .frame(width: 260)
-                .frame(maxHeight: .infinity)
-                .background(SettingsDesign.sidebarBackground)
+        ZStack(alignment: .top) {
+            // Background fill that runs all the way under the title strip.
+            SettingsDesign.pageBackground
+                .ignoresSafeArea()
 
-            // Vertical hairline between sidebar and content.
-            Rectangle()
-                .fill(SettingsDesign.divider)
-                .frame(width: 1)
-                .frame(maxHeight: .infinity)
+            HStack(spacing: 0) {
+                Sidebar(selection: $tab)
+                    .frame(width: 232)
+                    .frame(maxHeight: .infinity)
+                    .background(SettingsDesign.sidebarBackground)
 
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(SettingsDesign.pageBackground)
+                // Vertical hairline between sidebar and content.
+                Rectangle()
+                    .fill(SettingsDesign.divider)
+                    .frame(width: 1)
+                    .frame(maxHeight: .infinity)
+
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(SettingsDesign.pageBackground)
+            }
+            .padding(.top, Self.titleStripHeight)
+
+            // Centred title overlay sitting on top of the system title bar.
+            // The bar itself is transparent (`.fullSizeContentView` +
+            // `titleVisibility = .hidden`), so this is what the user sees.
+            titleStrip
         }
         .frame(minWidth: 880, idealWidth: 960,  maxWidth: .infinity,
                minHeight: 600, idealHeight: 720, maxHeight: .infinity)
         .preferredColorScheme(.dark)
+    }
+
+    /// Custom title strip across the top of the window. Centred Monaspace
+    /// title to match the mockup; the system title is hidden so the strip
+    /// stands alone.
+    private var titleStrip: some View {
+        Text("CyphrWhispr  —  Settings")
+            .font(SettingsDesign.krBody(size: 11.5, weight: .medium))
+            .foregroundStyle(SettingsDesign.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.titleStripHeight)
     }
 
     @ViewBuilder
@@ -63,41 +93,42 @@ struct SettingsView: View {
 // MARK: - Sidebar
 
 /// Left-side nav. "SETTINGS" header at top, five rows beneath. Selected row
-/// is a soft purple pill with a left bar in the user's accent; inactive rows
-/// show a gray `▸` chevron before the label. Clicking a row swaps the tab.
+/// is a soft purple pill (`#241F3B` — fixed, not derived from accent) with
+/// a left bar in the user's accent. Inactive rows show a gray `▸` chevron
+/// before the label.
 private struct Sidebar: View {
     @Binding var selection: SettingsView.Tab
-    @EnvironmentObject private var prefs: PreferencesStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // "SETTINGS" header — tracked-out and dim, doubles as a visual
-            // anchor at the top of the sidebar.
+            // "SETTINGS" header — tracked-out and dim, anchors the top of the
+            // sidebar.
             Text("SETTINGS")
                 .font(SettingsDesign.krSidebarHeader())
-                .tracking(2.0)
+                .tracking(2.4)
                 .foregroundStyle(SettingsDesign.sidebarHeader)
-                .padding(.horizontal, 28)
-                .padding(.top, 28)
-                .padding(.bottom, 18)
+                .padding(.horizontal, 24)
+                .padding(.top, 22)
+                .padding(.bottom, 14)
 
-            // The five fixed nav items, top-to-bottom in mockup order.
-            VStack(spacing: 6) {
+            // The five fixed nav items, in mockup order. Tight 2pt spacing
+            // — the row itself supplies vertical padding for breathing room.
+            VStack(spacing: 2) {
                 ForEach(SettingsView.Tab.allCases) { tab in
                     SidebarRow(
                         title: tab.rawValue,
                         isActive: tab == selection,
                         onTap: {
-                            withAnimation(.easeInOut(duration: 0.16)) {
+                            withAnimation(.easeInOut(duration: 0.14)) {
                                 selection = tab
                             }
                         }
                     )
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 10)
 
-            Spacer()
+            Spacer(minLength: 0)
         }
     }
 }
@@ -110,58 +141,58 @@ private struct SidebarRow: View {
     @EnvironmentObject private var prefs: PreferencesStore
     @State private var isHovered = false
 
+    /// Row content height — explicit so the active pill renders at the
+    /// mockup-spec size (~36pt) instead of becoming greedy.
+    private let rowHeight: CGFloat = 36
+
     var body: some View {
         Button(action: onTap) {
-            ZStack(alignment: .leading) {
-                // Selection pill — soft accent wash, only drawn when active.
-                if isActive {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(prefs.accent.opacity(0.18))
-                }
-                HStack(spacing: 16) {
-                    // Active state shows a filled accent dot; inactive shows
-                    // a small chevron. Both occupy the same 14pt slot so the
-                    // labels line up across rows.
-                    ZStack {
-                        if isActive {
-                            Circle()
-                                .fill(prefs.accent)
-                                .frame(width: 8, height: 8)
-                        } else {
-                            Text("▸")
-                                .font(SettingsDesign.krBody(size: 12, weight: .medium))
-                                .foregroundStyle(SettingsDesign.textTertiary)
-                        }
-                    }
-                    .frame(width: 14, alignment: .center)
-
-                    Text(title)
-                        .font(SettingsDesign.krSidebarItem(active: isActive))
-                        .foregroundStyle(isActive
-                                         ? SettingsDesign.textPrimary
-                                         : SettingsDesign.textSecondary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.leading, 14)
-                .padding(.trailing, 14)
-                .padding(.vertical, 12)
-
-                // Left accent bar that "pins" the selection. Behind the
-                // label so it reads like a marker.
-                if isActive {
-                    HStack(spacing: 0) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+            HStack(spacing: 14) {
+                // Active state shows a filled accent dot; inactive shows a
+                // small chevron. Both occupy the same 14pt slot so the
+                // labels line up across rows.
+                ZStack {
+                    if isActive {
+                        Circle()
                             .fill(prefs.accent)
-                            .frame(width: 3, height: 22)
-                            .padding(.leading, 0)
-                        Spacer()
+                            .frame(width: 6, height: 6)
+                    } else {
+                        Text("▸")
+                            .font(SettingsDesign.krBody(size: 11, weight: .medium))
+                            .foregroundStyle(SettingsDesign.textTertiary)
                     }
                 }
+                .frame(width: 12, alignment: .center)
+
+                Text(title)
+                    .font(SettingsDesign.krSidebarItem(size: 13, active: isActive))
+                    .foregroundStyle(isActive
+                                     ? SettingsDesign.textPrimary
+                                     : SettingsDesign.textSecondary)
+                Spacer(minLength: 0)
             }
+            .padding(.leading, 14)
+            .padding(.trailing, 14)
+            .frame(height: rowHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Selection pill — fixed dark purple (#241F3B) per mockup spec.
+            // Attached as a `.background` so it tracks the row's intrinsic
+            // size rather than becoming greedy inside a ZStack.
             .background(
-                // Hover halo on inactive rows so they feel clickable.
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(isActive ? 0 : (isHovered ? 0.04 : 0)))
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isActive
+                              ? SettingsDesign.sidebarSelectionFill
+                              : (isHovered
+                                 ? Color.white.opacity(0.03)
+                                 : Color.clear))
+                    if isActive {
+                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                            .fill(prefs.accent)
+                            .frame(width: 3, height: 18)
+                            .padding(.leading, 1)
+                    }
+                }
             )
             .contentShape(Rectangle())
         }
@@ -174,7 +205,7 @@ private struct SidebarRow: View {
 
 // MARK: - Tab content header
 
-/// Shared page header used at the top of every tab — page title (~24pt) and
+/// Shared page header used at the top of every tab — page title (~22pt) and
 /// secondary subtitle line. Sized + spaced to match the mockup hierarchy.
 struct SettingsPageHeader: View {
     let title: String
@@ -183,10 +214,10 @@ struct SettingsPageHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(SettingsDesign.krPageTitle())
+                .font(SettingsDesign.krPageTitle(size: 30))
                 .foregroundStyle(SettingsDesign.textPrimary)
             Text(subtitle)
-                .font(SettingsDesign.krPageSubtitle())
+                .font(SettingsDesign.krPageSubtitle(size: 13))
                 .foregroundStyle(SettingsDesign.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -204,14 +235,14 @@ struct SettingsTabContainer<Body_: View>: View {
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 28) {
                 SettingsPageHeader(title: title, subtitle: subtitle)
                 content()
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 36)
+            .padding(.horizontal, 40)
             .padding(.top, 36)
-            .padding(.bottom, 28)
+            .padding(.bottom, 32)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
