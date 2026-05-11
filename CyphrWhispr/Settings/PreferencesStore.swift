@@ -22,6 +22,29 @@ final class PreferencesStore: ObservableObject {
         static let polishEnabled = "Polish.enabled"
         static let polishPromptIsCustomised = "Polish.promptIsCustomised"
         static let polishCustomPrompt = "Polish.customPrompt"
+        // General tab — new in the sidebar refactor.
+        static let launchAtLogin = "General.launchAtLogin"
+        static let hideMenuBarIcon = "General.hideMenuBarIcon"
+        static let activationMode = "General.activationMode"
+        static let inhibitWhileTyping = "Shortcut.inhibitWhileTyping"
+    }
+
+    /// How the hotkey turns dictation on and off. **Push-to-talk** (default)
+    /// keeps the user holding the chord; release ends the session. **Toggle**
+    /// flips on a single press and off on the next press — easier for long
+    /// dictation but slightly harder to recover from accidental triggers.
+    /// Read by `HotkeyManager` at install time; changing this restarts the
+    /// hotkey wiring so the new mode takes effect immediately.
+    enum ActivationMode: String, CaseIterable, Identifiable, Codable {
+        case pushToTalk = "push_to_talk"
+        case toggle = "toggle"
+        var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .pushToTalk: return "Push to talk"
+            case .toggle:     return "Toggle"
+            }
+        }
     }
 
     /// The original brand violet — what the app ships with and what the
@@ -123,6 +146,62 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
+    // MARK: - General tab
+    //
+    // Three switches and one mode-picker that live in Settings → General.
+    // All wired to real behaviour: launch-at-login flips an `SMAppService`
+    // registration, hide-menu-bar toggles the `NSStatusItem`, activation
+    // mode rebinds the hotkey callbacks in `HotkeyManager`, and inhibit-
+    // while-typing is read by `HotkeyManager` before invoking onPress.
+
+    /// Register CyphrWhispr to start when the user signs in. Backed by
+    /// `SMAppService.mainApp` — registration is reversible from System
+    /// Settings → General → Login Items. Failures (sandbox missing,
+    /// service not approved, etc.) are logged but don't crash; the toggle
+    /// is set back to false so the user sees the request didn't stick.
+    @Published var launchAtLogin: Bool {
+        didSet {
+            guard launchAtLogin != oldValue else { return }
+            UserDefaults.standard.set(launchAtLogin, forKey: Key.launchAtLogin)
+            NotificationCenter.default.post(name: .launchAtLoginDidChange, object: self)
+        }
+    }
+
+    /// Hide the menu-bar status item. The hotkey still works — the icon is
+    /// just suppressed for users who prefer a fully-invisible menu bar
+    /// (think: Bartender users who don't need yet another icon up there).
+    /// `StatusItemController` observes this and adds/removes the
+    /// `NSStatusItem` accordingly.
+    @Published var hideMenuBarIcon: Bool {
+        didSet {
+            guard hideMenuBarIcon != oldValue else { return }
+            UserDefaults.standard.set(hideMenuBarIcon, forKey: Key.hideMenuBarIcon)
+            NotificationCenter.default.post(name: .hideMenuBarIconDidChange, object: self)
+        }
+    }
+
+    /// Push-to-talk vs Toggle. `HotkeyManager` reads this when wiring up
+    /// the global hotkey; flipping it posts a notification so the manager
+    /// can re-install with the new behaviour mid-session.
+    @Published var activationMode: ActivationMode {
+        didSet {
+            guard activationMode != oldValue else { return }
+            UserDefaults.standard.set(activationMode.rawValue, forKey: Key.activationMode)
+            NotificationCenter.default.post(name: .activationModeDidChange, object: self)
+        }
+    }
+
+    /// Suppress the hotkey when a text-entry field already has focus and the
+    /// user is actively typing. Prevents accidental triggers while writing
+    /// code or filling forms. Default ON — read by `HotkeyManager` before
+    /// invoking onPress; doesn't change the hotkey registration itself.
+    @Published var inhibitWhileTyping: Bool {
+        didSet {
+            guard inhibitWhileTyping != oldValue else { return }
+            UserDefaults.standard.set(inhibitWhileTyping, forKey: Key.inhibitWhileTyping)
+        }
+    }
+
     private init() {
         let defaults = UserDefaults.standard
         let storedModel = defaults.string(forKey: Key.activeModelID)
@@ -167,6 +246,28 @@ final class PreferencesStore: ObservableObject {
         self.polishPromptIsCustomised = defaults.bool(forKey: Key.polishPromptIsCustomised)
         self.polishCustomPrompt = defaults.string(forKey: Key.polishCustomPrompt)
             ?? CleanupPrompt.defaultPrompt
+
+        // General-tab defaults:
+        //   • Launch at login OFF — opt-in (we don't auto-add ourselves on
+        //     first launch; the user has to ask).
+        //   • Hide menu bar OFF — icon visible by default so people can
+        //     find Settings without keyboard navigation.
+        //   • Activation mode push-to-talk — matches the v1 spec.
+        //   • Inhibit while typing ON — safest default for daily use.
+        self.launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
+        self.hideMenuBarIcon = defaults.bool(forKey: Key.hideMenuBarIcon)
+        if let modeRaw = defaults.string(forKey: Key.activationMode),
+           let mode = ActivationMode(rawValue: modeRaw) {
+            self.activationMode = mode
+        } else {
+            self.activationMode = .pushToTalk
+        }
+        if defaults.object(forKey: Key.inhibitWhileTyping) == nil {
+            self.inhibitWhileTyping = true
+            defaults.set(true, forKey: Key.inhibitWhileTyping)
+        } else {
+            self.inhibitWhileTyping = defaults.bool(forKey: Key.inhibitWhileTyping)
+        }
     }
 
     /// Mark first-run as done; called once the user has accepted (or changed
@@ -295,4 +396,18 @@ extension Notification.Name {
     /// switch — like replaying the cinematic spawn animation on the next
     /// hotkey press.
     static let activeModelDidChange = Notification.Name("CyphrWhispr.activeModelDidChange")
+
+    /// Posted when the user flips the Launch-at-login switch. The launch-
+    /// services helper observes this to register / unregister the
+    /// `SMAppService.mainApp` entry.
+    static let launchAtLoginDidChange = Notification.Name("CyphrWhispr.launchAtLoginDidChange")
+
+    /// Posted when the user flips the Hide-menu-bar-icon switch.
+    /// `StatusItemController` observes this and installs / removes the
+    /// `NSStatusItem` so the change takes effect immediately.
+    static let hideMenuBarIconDidChange = Notification.Name("CyphrWhispr.hideMenuBarIconDidChange")
+
+    /// Posted when the user changes the activation mode (push-to-talk vs
+    /// toggle). `HotkeyManager` observes this and re-wires its callbacks.
+    static let activationModeDidChange = Notification.Name("CyphrWhispr.activationModeDidChange")
 }

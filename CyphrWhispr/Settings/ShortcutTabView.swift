@@ -1,193 +1,114 @@
 import SwiftUI
+import AppKit
 import KeyboardShortcuts
 
-/// Settings → Shortcut tab, restyled to match the dark glass design.
-/// The KeyboardShortcuts library's `Recorder` view does the heavy lifting of
-/// capturing key chords, persisting to UserDefaults, and re-binding the global
-/// hotkey — we just wrap it in a violet-glow input so it reads like the rest
-/// of the design system.
+/// Settings → Shortcut. Three-row card matching the mockup:
+///
+///   1. Activation hotkey — the global chord that opens the pill.
+///      Rendered as the KeyboardShortcuts.Recorder wrapped in our own
+///      accent-bordered shell so it reads as a retro-keycap field.
+///   2. Inhibit while typing — boolean toggle, default ON. Suppresses
+///      the hotkey when a text field already has focus.
+///   3. Per-app overrides — placeholder button that links to a future
+///      per-app exclusion UI (not implemented in v1; the button surfaces
+///      a "coming soon" alert when clicked).
 struct ShortcutTabView: View {
+    @EnvironmentObject private var prefs: PreferencesStore
+    @State private var showPerAppAlert = false
+
     var body: some View {
-        // ScrollView so the layout stays usable when the user resizes the
-        // window below this tab's natural height.
-        ScrollView(.vertical, showsIndicators: false) {
-            content
-                .padding(.bottom, 4)
+        SettingsTabContainer(
+            title: "Shortcut",
+            subtitle: "The global hotkey that opens the pill. Click to record a new combination."
+        ) {
+            SettingsCard {
+                VStack(spacing: 0) {
+                    activationHotkeyRow
+                    CardRowDivider()
+                    inhibitWhileTypingRow
+                    CardRowDivider()
+                    perAppOverridesRow
+                }
+            }
+
+            // Footer hint — tips that used to live in their own card. Moved
+            // inline so the visible card structure matches the mockup
+            // exactly (single card, three rows).
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Press any combination of ⌃ ⌥ ⌘ ⇧ plus a key. Avoid ⌘Space (Spotlight) and ⌃⌘Space (Emoji & Symbols).")
+                    .font(SettingsDesign.krCaption(size: 11))
+                    .foregroundStyle(SettingsDesign.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 4)
+        }
+        .alert("Per-app overrides", isPresented: $showPerAppAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Per-app exclusion lists land in a future release. For now you can rebind the hotkey to a chord that doesn't conflict with the apps you use.")
         }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        VStack(spacing: 18) {
-            SettingsCard {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .center, spacing: 12) {
-                        SettingsIconBadge(systemName: "command")
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Dictation hotkey")
-                                .font(SettingsDesign.krTitle(size: 17))
-                                .foregroundStyle(SettingsDesign.textPrimary)
-                            Text("Hold to dictate")
-                                .font(SettingsDesign.krBody(size: 12))
-                                .foregroundStyle(SettingsDesign.textSecondary)
-                        }
-                        Spacer()
-                    }
+    // MARK: - Rows
 
-                    // Glowing shortcut input. KeyboardShortcuts.Recorder is an
-                    // NSViewRepresentable — we can't restyle its internal label,
-                    // so we wrap it in our own glass capsule and let it sit on
-                    // top centred. Tap the row to start recording; the library
-                    // shows the placeholder/active state itself.
-                    ShortcutField()
+    private var activationHotkeyRow: some View {
+        CardRow(
+            title: "Activation hotkey",
+            description: "Default ^⌘Space. Pick anything that doesn't collide with Spotlight or your IME."
+        ) {
+            ShortcutRecorderField()
+        }
+    }
 
-                    Text("Click the shortcut field, then press the key combination you want to use.")
-                        .font(SettingsDesign.krBody(size: 12))
-                        .foregroundStyle(SettingsDesign.textSecondary)
-                    Text("Press any combination of ⌃ ⌥ ⌘ ⇧ plus a key.")
-                        .font(SettingsDesign.krBody(size: 12))
-                        .foregroundStyle(SettingsDesign.textSecondary)
-                    Text("The shortcut takes effect immediately.")
-                        .font(SettingsDesign.krBody(size: 12))
-                        .foregroundStyle(SettingsDesign.textSecondary)
+    private var inhibitWhileTypingRow: some View {
+        CardRow(
+            title: "Inhibit while typing",
+            description: "Suppress the hotkey when a text-entry field already has focus and is actively being typed in."
+        ) {
+            Toggle("", isOn: $prefs.inhibitWhileTyping)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(prefs.accent)
+        }
+    }
 
-                    Divider()
-                        .overlay(SettingsDesign.cardStroke)
-                        .padding(.vertical, 4)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Tips for picking a shortcut")
-                            .font(SettingsDesign.krBody(size: 13, weight: .semibold))
-                            .foregroundStyle(SettingsDesign.textPrimary)
-
-                        TipRow(
-                            icon: "exclamationmark.triangle.fill",
-                            text: "Avoid ⌘Space (Spotlight) and ⌃⌘Space (Emoji & Symbols)."
-                        )
-                        TipRow(
-                            icon: "hand.raised.fill",
-                            text: "Hold-to-talk feels best with chords you can hold one-handed (⌥Space, ⌃Space, fn)."
-                        )
-                    }
-                }
+    private var perAppOverridesRow: some View {
+        CardRow(
+            title: "Per-app overrides",
+            description: "Disable the hotkey in apps that conflict (e.g. Terminal sessions, Stream Deck profiles)."
+        ) {
+            Button("Configure…") {
+                showPerAppAlert = true
             }
-
-            Spacer(minLength: 0)
-
-            // Footer row: pill logo bottom-left, "Reset to default" bottom-right.
-            HStack {
-                MiniPillLogo()
-                Spacer()
-                Button("Reset to default") {
-                    KeyboardShortcuts.reset(.toggleDictation)
-                }
-                .buttonStyle(GhostButtonStyle())
-            }
+            .buttonStyle(NativeMacButtonStyle())
         }
     }
 }
 
-// MARK: - Shortcut input (glass wrapper around KeyboardShortcuts.Recorder)
+// MARK: - Shortcut recorder field
 
-private struct ShortcutField: View {
+/// Wraps the `KeyboardShortcuts.Recorder` in our own accent-bordered shell.
+/// The library renders the active key chord as its own NSView (we can't
+/// re-render those keycaps), so we sit it inside a rounded outline + soft
+/// glow that visually matches the mockup's three-keycap field.
+private struct ShortcutRecorderField: View {
     @EnvironmentObject private var prefs: PreferencesStore
 
     var body: some View {
         ZStack {
-            // Glass capsule background with accent outline.
-            Capsule()
-                .fill(Color.black.opacity(0.35))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.black.opacity(0.25))
                 .overlay(
-                    Capsule()
-                        .strokeBorder(prefs.accentGlowStroke, lineWidth: 1.5)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(prefs.accent.opacity(0.65), lineWidth: 1.5)
                 )
-                .shadow(color: prefs.accent.opacity(0.55), radius: 14, x: 0, y: 0)
-                .frame(height: 52)
+                .shadow(color: prefs.accent.opacity(0.35), radius: 10, x: 0, y: 0)
 
-            // The actual recorder. We hide its label and let our background
-            // provide the visual shell. Setting an empty `Text` label means
-            // the recorder shows just its current key chord, centred.
             KeyboardShortcuts.Recorder("", name: .toggleDictation)
                 .controlSize(.large)
-                .frame(maxWidth: .infinity)
-                .scaleEffect(1.0)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
         }
-    }
-}
-
-// MARK: - Tip row
-
-private struct TipRow: View {
-    let icon: String
-    let text: String
-
-    @EnvironmentObject private var prefs: PreferencesStore
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Circle()
-                .fill(prefs.accentWash)
-                .overlay(
-                    Image(systemName: icon)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(prefs.accent)
-                )
-                .frame(width: 22, height: 22)
-            Text(text)
-                .font(SettingsDesign.krBody(size: 12))
-                .foregroundStyle(SettingsDesign.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-    }
-}
-
-// MARK: - Footer pill mark + ghost button
-
-/// Mini version of the pill — just the triangle + circle inside a small black
-/// capsule — used as a bottom-left "brand mark" in the Shortcut footer.
-struct MiniPillLogo: View {
-    var body: some View {
-        HStack(alignment: .center, spacing: 6) {
-            Image(systemName: "play.fill")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .rotationEffect(.degrees(90))   // play.fill points right; rotate 90° → down-pointing triangle
-                .frame(width: 11, height: 11)
-                .foregroundStyle(.white)
-            Circle()
-                .fill(.white)
-                .frame(width: 10, height: 10)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            Capsule()
-                .fill(Color.black)
-                .overlay(
-                    Capsule().strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
-                )
-        )
-    }
-}
-
-/// Subtle button style that matches the glass aesthetic — used for the Reset
-/// button and other secondary actions in the Settings UI.
-struct GhostButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(SettingsDesign.krBody(size: 12, weight: .medium))
-            .foregroundStyle(SettingsDesign.textPrimary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(
-                Capsule()
-                    .fill(Color.white.opacity(configuration.isPressed ? 0.10 : 0.06))
-                    .overlay(
-                        Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
-                    )
-            )
-            .contentShape(Capsule())
+        .frame(width: 220, height: 48)
     }
 }

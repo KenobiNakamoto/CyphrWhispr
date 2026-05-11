@@ -39,10 +39,15 @@ final class SettingsWindowController {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .visible
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(SettingsDesign.bgDeepest)
+        window.backgroundColor = NSColor(SettingsDesign.pageBackground)
         window.isMovableByWindowBackground = true
-        // Hard floor on size so the layout doesn't break at silly small widths.
-        window.minSize = NSSize(width: 460, height: 540)
+        // Hard floor on size — the sidebar (260pt) + content panel needs at
+        // least 880pt wide before rows start to feel cramped.
+        window.minSize = NSSize(width: 880, height: 600)
+        // Ideal first-launch size if no autosave entry exists yet. The
+        // sidebar refactor needs more horizontal room than the old segmented
+        // tab layout did.
+        window.setContentSize(NSSize(width: 960, height: 720))
         window.center()
         // Autosaves position AND size between launches — the user's preferred
         // window dimensions stick even after a quit/relaunch.
