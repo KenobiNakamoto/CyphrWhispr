@@ -4,15 +4,14 @@ import Combine
 
 @MainActor
 final class PillWindowController {
-    /// True when the next `show()` should play the cinematic spawn instead of
-    /// the instant fade-in. Set to `true` on init (so the first press of every
-    /// session is cinematic) and again whenever the user picks a different
-    /// Whisper model in Settings (because that triggers a fresh pre-warm and
-    /// the same "first press" feel applies). Set to `false` after each spawn.
-    private var spawnPending = true
-
-    /// Held strongly so the observer survives for the controller's lifetime.
-    private var modelChangeObserver: NSObjectProtocol?
+    /// Always `false` — cinematic spawn animation is permanently disabled
+    /// per user request ("the pill should just pop up in its final form,
+    /// not animate every session"). Kept as a `let` rather than ripped out
+    /// of `show()` to preserve the spawn-task scaffolding in case we ever
+    /// want to bring it back behind a setting. The install animation
+    /// (a separate code path) still plays exactly once on first-ever
+    /// launch, gated by `AppCoordinator.hasShownFirstInstallEver`.
+    private let spawnPending = false
 
     /// Total panel size. Bigger than the visible pill (170×48) because PillView
     /// pads itself so the drop shadow + rim halo can fully fade to alpha 0
@@ -40,24 +39,9 @@ final class PillWindowController {
     private let viewModel = PillViewModel()
 
     init() {
-        // Re-arm the spawn after every model switch. PreferencesStore posts
-        // .activeModelDidChange in its activeModelID didSet (after dedup).
-        // Scope to PreferencesStore.shared so we don't re-arm spawn from
-        // any unrelated notification post (defensive against future code
-        // paths that might post .activeModelDidChange for other reasons).
-        modelChangeObserver = NotificationCenter.default.addObserver(
-            forName: .activeModelDidChange,
-            object: PreferencesStore.shared,
-            queue: .main
-        ) { [weak self] _ in
-            self?.spawnPending = true
-        }
-    }
-
-    deinit {
-        if let observer = modelChangeObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        // Previously: subscribed to `.activeModelDidChange` to re-arm the
+        // cinematic spawn after every model switch. Removed because the
+        // spawn animation is permanently disabled (see `spawnPending`).
     }
 
     /// Fired when the cinematic spawn animation finishes (i.e. when the pill
@@ -121,7 +105,9 @@ final class PillWindowController {
         }
 
         if spawnPending {
-            spawnPending = false
+            // Dead branch — `spawnPending` is a `let false` constant. Kept
+            // only so the spawn-task scaffolding survives in case we want
+            // to bring the animation back behind a setting one day.
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let completed = await self.viewModel.playSpawn()
