@@ -26,9 +26,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // pref-change notifications for the rest of the session.
         _ = LaunchAtLoginService.shared
         coordinator.start()
+
+        // Register the cyphr-whispr:// URL handler so `open cyphr-whispr://...`
+        // can drive the app remotely (scripting, deep-links). We use the
+        // legacy NSAppleEventManager API rather than `.onOpenURL` because
+        // this app has no SwiftUI WindowGroup scene to attach it to.
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleURL(_:withReply:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator.shutdown()
+    }
+
+    /// Routes `cyphr-whispr://...` URLs to the right runtime action. Currently
+    /// supports only `open-settings` but the switch is set up to grow.
+    @objc func handleURL(_ event: NSAppleEventDescriptor, withReply reply: NSAppleEventDescriptor) {
+        guard let raw = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: raw) else { return }
+        switch url.host {
+        case "open-settings":
+            SettingsWindowController.shared.show()
+        default:
+            break
+        }
     }
 }
