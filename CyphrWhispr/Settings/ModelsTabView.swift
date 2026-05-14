@@ -1,16 +1,15 @@
 import SwiftUI
 import AppKit
 
-/// Settings → Models tab — restyled to match the high-fidelity mockup. Each
-/// model row is a chunky entry with name + bracketed status badge + metadata
-/// line + a native-style `[Switch]` / `[In use]` / `[Download]` action
-/// button on the right. The currently-active row gets a soft accent wash to
-/// match the rest of the design language.
+/// Settings → Models. v2 glass redesign — one card listing installed +
+/// remote variants from `ModelInventory`, then a "Custom models" card
+/// with the import-folder action. Footer line shows the read-only models
+/// directory path.
 ///
-/// Data layer is unchanged — `ModelInventory` still combines the curated
-/// `ModelCatalog` with whatever is on disk in the models folder. The
-/// language picker that used to live at the top of this tab has moved to
-/// General (it's a daily-driver preference, not a model property).
+/// The data layer (`ModelInventory` + `HardwareProfiler` +
+/// `ModelRecommender` + the `NSOpenPanel` import flow) is preserved
+/// verbatim from the previous file; only the row presentation has been
+/// re-skinned onto the new components.
 struct ModelsTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
     @StateObject private var manager = ModelInventory()
@@ -18,43 +17,53 @@ struct ModelsTabView: View {
     private let profile = HardwareProfiler.profile()
 
     var body: some View {
-        SettingsTabContainer(
-            title: "Models",
-            subtitle: "Apple-Silicon-accelerated Whisper variants. We picked one that fits your Mac on first launch — switch any time."
-        ) {
-            SettingsCard {
-                VStack(spacing: 0) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                SectionHead3(
+                    title: "Models",
+                    subtitle: "Apple-Silicon-accelerated Whisper variants. We picked one that fits your Mac on first launch — switch any time."
+                )
+
+                Card3(title: "Installed", meta: "\(manager.rows.count) variants") {
                     ForEach(Array(manager.rows.enumerated()), id: \.element.id) { index, row in
-                        ModelRowView(
+                        ModelRow3(
                             row: row,
                             recommendedID: ModelRecommender.recommend(for: profile).id,
                             isActive: prefs.activeModelID == row.id,
+                            isLast: index == manager.rows.count - 1,
                             onSelect: { prefs.activeModelID = row.id },
                             onDelete: { manager.delete(row) }
                         )
-                        .environmentObject(prefs)
-                        if index < manager.rows.count - 1 {
-                            CardRowDivider()
+                    }
+                }
+
+                Card3(title: "Custom models") {
+                    Row3(label: "Import",
+                         sub: "Drop any converted Core ML Whisper bundle into ~/Library/Application Support/CyphrWhispr/models/ — it shows up here marked CUSTOM.",
+                         isLast: true) {
+                        CWButton(title: "Import…",
+                                 variant: .primary,
+                                 indicator: .glyph("+")) {
+                            manager.importCustomModel()
                         }
                     }
                 }
-            }
 
-            // Footer: import button + storage path (read-only). Path
-            // collapses `$HOME` to `~` to keep the line scannable.
-            HStack(spacing: 14) {
-                Button("[Import custom model…]") { manager.importCustomModel() }
-                    .buttonStyle(NativeMacButtonStyle())
-                    .accessibilityLabel("Import custom model")
-                Spacer()
-                Text(AppSupportPaths.modelsRoot.path.replacingOccurrences(
-                    of: NSHomeDirectory(), with: "~"))
-                    .font(SettingsDesign.krCaption(size: 11))
-                    .foregroundStyle(SettingsDesign.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                HStack(spacing: 0) {
+                    Spacer()
+                    Text(AppSupportPaths.modelsRoot.path.replacingOccurrences(
+                        of: NSHomeDirectory(), with: "~"))
+                        .font(CWFont.mono(size: CWFont.s11, weight: .regular))
+                        .foregroundColor(.cwFg3)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .padding(.top, 4)
             }
-            .padding(.top, 2)
+            .padding(.horizontal, 30)
+            .padding(.top, 26)
+            .padding(.bottom, 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear { manager.refresh() }
     }
@@ -62,38 +71,48 @@ struct ModelsTabView: View {
 
 // MARK: - Model row
 
-private struct ModelRowView: View {
+/// One row inside the "Installed" card. Title + state token on the top
+/// line; size · speed-hint · suffix on the metadata line. Tap anywhere
+/// in the row (or the trailing action button) to make it active /
+/// download / etc. — matches the existing production tap-to-switch
+/// behaviour. Active row gets a left-edge accent bar and a soft accent
+/// wash background.
+private struct ModelRow3: View {
     let row: ModelInventory.Row
-    /// ID of the model the recommender picked for this hardware. Highlighting
-    /// it as "Recommended" inside the row matches the mockup, which folds the
-    /// hardware-recommendation banner into the row itself.
     let recommendedID: String
     let isActive: Bool
+    let isLast: Bool
     let onSelect: () -> Void
     let onDelete: () -> Void
 
     @EnvironmentObject private var prefs: PreferencesStore
-    @State private var isHovered = false
+    @State private var hovering = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 5) {
+        HStack(alignment: .center, spacing: CWSpace.s4) {
+            VStack(alignment: .leading, spacing: 4) {
                 titleLine
                 metadataLine
             }
             Spacer(minLength: 14)
             actionButton
         }
-        .padding(.horizontal, SettingsDesign.rowPaddingHorizontal)
-        .padding(.vertical, SettingsDesign.rowPaddingVertical)
-        .background(
-            isActive
-                ? prefs.accent.opacity(0.10)
-                : (isHovered ? Color.white.opacity(0.02) : Color.clear)
-        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .background(rowBackground)
+        .overlay(alignment: .leading) {
+            if isActive {
+                Rectangle().fill(prefs.accent).frame(width: 3)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if !isLast {
+                Rectangle().fill(Color.cwBorder).frame(height: 1)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
-        .onHover { hovering in isHovered = hovering }
+        .onHover { hovering = $0 }
         .contextMenu {
             if row.isDownloaded && !isActive {
                 Button("Remove download", role: .destructive, action: onDelete)
@@ -101,47 +120,68 @@ private struct ModelRowView: View {
         }
     }
 
-    /// Row title — model display name + bracketed status badge. Two badge
-    /// variants: `[ ▪ ACTIVE ]` (accent) for the currently-selected model,
-    /// or the download status badge (downloaded / not installed) otherwise.
-    /// Baseline-aligned so badges sit visually centred with the text.
+    @ViewBuilder private var rowBackground: some View {
+        if isActive {
+            LinearGradient(colors: [prefs.accent.opacity(0.12),
+                                    prefs.accent.opacity(0.04)],
+                           startPoint: .top, endPoint: .bottom)
+        } else if hovering {
+            Color.white.opacity(0.04)
+        } else {
+            Color.clear
+        }
+    }
+
+    /// Row title — model display name + state token + custom marker.
+    /// Tokens follow v2's variant semantics: active (accent + caret),
+    /// recommended (amber triangle), downloaded (mint arrow), missing
+    /// (hollow), custom (violet meta chip).
     private var titleLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(row.displayName)
-                .font(SettingsDesign.krBody(size: 14.5, weight: .semibold))
-                .foregroundStyle(SettingsDesign.textPrimary)
-
-            if isActive {
-                TerminalBadge(label: "ACTIVE", glyph: "▪", tint: prefs.accent)
-            } else if row.isDownloaded {
-                TerminalBadge(label: "DOWNLOADED",
-                              glyph: "↓",
-                              tint: SettingsDesign.badgeSuccess)
-            } else {
-                TerminalBadge(label: "NOT INSTALLED",
-                              glyph: "□",
-                              tint: SettingsDesign.badgeDanger)
-            }
-
+                .font(CWFont.mono(size: CWFont.s13, weight: .medium))
+                .foregroundColor(.cwFg1)
+            stateToken
             if row.isCustom {
-                TerminalBadge(label: "CUSTOM", glyph: nil, tint: SettingsDesign.badgeBlue)
+                CWToken(text: "custom", variant: .custom, indicator: .none)
             }
         }
     }
 
-    /// One-line metadata: disk size · realtime estimate · "recommended"
-    /// / "english only" / "bundled fallback" suffix.
+    @ViewBuilder private var stateToken: some View {
+        if isActive {
+            CWToken(text: "active",
+                    variant: .active,
+                    indicator: .block,
+                    live: true)
+        } else if !row.isDownloaded {
+            CWToken(text: "not installed",
+                    variant: .missing,
+                    indicator: .hollow)
+        } else if row.id == recommendedID {
+            CWToken(text: "recommended",
+                    variant: .recommended,
+                    indicator: .glyph("▲"))
+        } else {
+            CWToken(text: "downloaded",
+                    variant: .downloaded,
+                    indicator: .glyph("↓"))
+        }
+    }
+
     private var metadataLine: some View {
         Text(metadataText)
-            .font(SettingsDesign.krCaption(size: 12))
-            .foregroundStyle(SettingsDesign.textSecondary)
+            .font(CWFont.mono(size: CWFont.s11, weight: .regular))
+            .foregroundColor(.cwFg3)
             .lineLimit(1)
     }
 
     private var metadataText: String {
         var parts: [String] = []
         let sizeLabel = ByteCountFormatter.string(
-            fromByteCount: row.diskBytes > 0 ? row.diskBytes : Int64(row.approxSizeMB) * 1_048_576,
+            fromByteCount: row.diskBytes > 0
+                ? row.diskBytes
+                : Int64(row.approxSizeMB) * 1_048_576,
             countStyle: .file
         )
         parts.append(sizeLabel)
@@ -158,29 +198,27 @@ private struct ModelRowView: View {
         return parts.joined(separator: " · ")
     }
 
-    /// Hard-coded — these are the small `.en` variants we ship in the .app
-    /// bundle so the app works offline immediately on first launch. Used
-    /// only to label the metadata line; the actual loading logic lives in
-    /// `WhisperKitBackend`.
+    /// Hard-coded — these are the small `.en` variants we ship in the
+    /// .app bundle so the app works offline immediately on first launch.
     private static let bundledFallbackIDs: Set<String> = [
         "openai_whisper-small.en",
     ]
 
-    @ViewBuilder
-    private var actionButton: some View {
+    @ViewBuilder private var actionButton: some View {
         if isActive {
-            Button("[In use]") {}
-                .buttonStyle(NativeMacButtonStyle())
-                .disabled(true)
-                .accessibilityLabel("Currently in use")
-        } else if row.isDownloaded {
-            Button("[Switch]") { onSelect() }
-                .buttonStyle(NativeMacButtonStyle())
-                .accessibilityLabel("Switch to this model")
+            CWButton(title: "In use", variant: .ghost) { }
+        } else if !row.isDownloaded {
+            CWButton(title: "Download",
+                     variant: .ghost,
+                     indicator: .glyph("↓")) {
+                onSelect()
+            }
         } else {
-            Button("[Download]") { onSelect() }
-                .buttonStyle(NativeMacButtonStyle())
-                .accessibilityLabel("Download this model")
+            CWButton(title: "Switch",
+                     variant: .primary,
+                     indicator: .glyph("›")) {
+                onSelect()
+            }
         }
     }
 }
@@ -188,8 +226,9 @@ private struct ModelRowView: View {
 // MARK: - Inventory
 
 /// Combines `ModelCatalog` (curated download options) with a scan of the
-/// on-disk models folder (downloaded + user-imported custom models). Drives
-/// the Models tab UI. Same as before — the refactor is purely cosmetic.
+/// on-disk models folder (downloaded + user-imported custom models).
+/// Drives the Models tab UI. Unchanged from the legacy file — the v2
+/// migration is purely cosmetic.
 @MainActor
 final class ModelInventory: ObservableObject {
     struct Row: Identifiable, Hashable {
