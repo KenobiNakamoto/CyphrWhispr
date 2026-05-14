@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest a new feature or improvement
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the user-facing pain or limitation. Skip "I want feature X" — go one level deeper to the underlying need.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like CyphrWhispr to behave?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you've tried or thought about.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      description: CyphrWhispr is intentionally small, local-only, and menu-bar-resident. Features that fight those properties usually get declined.
+      options:
+        - label: This proposal keeps the app local-only (no cloud round-trips).
+        - label: This proposal keeps the menu-bar / dockless contract intact.

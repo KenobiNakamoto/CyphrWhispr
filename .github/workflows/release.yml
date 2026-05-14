@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build, sign, notarize, publish
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Install XcodeGen + create-dmg
+        run: brew install xcodegen create-dmg
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # Importing the Developer ID cert + notarization happen here once the
+      # project has an Apple Developer Program team. Until then this workflow
+      # is gated on `workflow_dispatch` and the tag-push trigger is informational.
+      #
+      # Required secrets (added in repo settings → Secrets and variables → Actions):
+      #   APPLE_CERTIFICATE_P12_BASE64  — base64-encoded Developer ID Application .p12
+      #   APPLE_CERTIFICATE_PASSWORD    — password for the .p12
+      #   APPLE_NOTARY_PROFILE          — name of `notarytool` keychain profile to store
+      #   APPLE_API_KEY_ID              — App Store Connect API key ID
+      #   APPLE_API_KEY_ISSUER_ID       — App Store Connect API issuer ID
+      #   APPLE_API_KEY_BASE64          — base64-encoded .p8 API key
+      #
+      # See scripts/release.sh for the local-equivalent steps.
+      - name: Build archive (unsigned placeholder)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project CyphrWhispr.xcodeproj \
+            -scheme CyphrWhispr \
+            -configuration Release \
+            -archivePath build/CyphrWhispr.xcarchive \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CyphrWhispr-xcarchive
+          path: build/CyphrWhispr.xcarchive
+          retention-days: 14

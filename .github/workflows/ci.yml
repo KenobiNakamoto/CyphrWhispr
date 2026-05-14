@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "update/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test (macOS)
+    runs-on: macos-14
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project CyphrWhispr.xcodeproj \
+            -scheme CyphrWhispr
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project CyphrWhispr.xcodeproj \
+            -scheme CyphrWhispr \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty || true
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project CyphrWhispr.xcodeproj \
+            -scheme CyphrWhispr \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            -enableCodeCoverage YES \
+            | xcpretty || true
+
+  lint:
+    name: Lint (SwiftFormat + SwiftLint)
+    runs-on: macos-14
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          brew install swiftformat swiftlint
+
+      - name: SwiftFormat (lint mode)
+        run: swiftformat --lint .
+
+      - name: SwiftLint
+        run: swiftlint --strict
