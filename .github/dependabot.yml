@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Swift Package Manager dependencies declared via XcodeGen → Xcode project.
+  # Dependabot scans Package.resolved once it's committed.
+  - package-ecosystem: "swift"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "swift"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "ci"
