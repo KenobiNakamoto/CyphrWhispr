@@ -1,8 +1,18 @@
 # First-Install Animation — Design
 
-**Date:** 2026-05-04
-**Status:** Draft, pending user review
-**Scope:** UX for the one-time Core ML compile that happens when WhisperKit first encounters a model on a given Mac
+**Date:** 2026-05-04 (revised 2026-05-05 with high-fidelity mockup deltas)
+**Status:** Approved — ready to plan
+**Scope:** UX for any cold launch where the WhisperKit warm-up takes long enough to need explicit feedback (not just first-install — see "Detection" below).
+
+## Revision deltas (2026-05-05) — supersede earlier text where they conflict
+
+1. **Detection switched from "model not yet compiled on disk" to "warm-up still pending at hotkey-press time."** The trigger is now: when the first hotkey of the session arrives, if `AppCoordinator.state == .loadingModel` (warm-up hasn't finished), play the install animation. If it's already `.idle`, play the existing 3.6s spawn animation. This removes the need for `WhisperKitBackend.isModelCompiled(_:)` filesystem introspection and naturally covers Core ML cache invalidations and slow first-loads.
+
+2. **Idle pill bar layout changes site-wide.** The bar group shifts right by ~19pt (mockup: 38px) to give visual breathing room — first bar at x ≈ 90, last bar's right edge at x ≈ 135. This change applies to the **live idle pill in every state**, not just animations. The existing 5-bar `SpawnTimeline` end-frame is wrong (it expects bars at x=70..156 and only renders 5 bars at 2pt wide); both idle layout and spawn end-frame must be brought in line with the canonical idle state defined in the high-fidelity README.
+
+3. **Canonical mockup updated.** [`assets/2026-05-04-first-install-animation-mockup.html`](assets/2026-05-04-first-install-animation-mockup.html) is the authoritative reference. Read its accompanying README (delivered alongside the mockup; pinned as `Visual Aides/Pill Animation/Start up Animation/design_handoff_pill_animation/README.md`) for pixel-exact geometry, colours, easings, and acceptance criteria.
+
+
 
 ## Goal
 

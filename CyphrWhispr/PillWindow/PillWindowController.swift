@@ -4,6 +4,16 @@ import Combine
 
 @MainActor
 final class PillWindowController {
+    /// True when the next `show()` should play the cinematic spawn instead of
+    /// the instant fade-in. Set to `true` on init (so the first press of every
+    /// session is cinematic) and again whenever the user picks a different
+    /// Whisper model in Settings (because that triggers a fresh pre-warm and
+    /// the same "first press" feel applies). Set to `false` after each spawn.
+    private var spawnPending = true
+
+    /// Held strongly so the observer survives for the controller's lifetime.
+    private var modelChangeObserver: NSObjectProtocol?
+
     /// Total panel size. Bigger than the visible pill (170×48) because PillView
     /// pads itself so the drop shadow + rim halo can fully fade to alpha 0
     /// before reaching the panel boundary. Bumped ~30% over the previous
@@ -29,7 +39,76 @@ final class PillWindowController {
     private var panel: PillPanel?
     private let viewModel = PillViewModel()
 
+    init() {
+        // Re-arm the spawn after every model switch. PreferencesStore posts
+        // .activeModelDidChange in its activeModelID didSet (after dedup).
+        // Scope to PreferencesStore.shared so we don't re-arm spawn from
+        // any unrelated notification post (defensive against future code
+        // paths that might post .activeModelDidChange for other reasons).
+        modelChangeObserver = NotificationCenter.default.addObserver(
+            forName: .activeModelDidChange,
+            object: PreferencesStore.shared,
+            queue: .main
+        ) { [weak self] _ in
+            self?.spawnPending = true
+        }
+    }
+
+    deinit {
+        if let observer = modelChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// Fired when the cinematic spawn animation finishes (i.e. when the pill
+    /// has transitioned from `.spawning(...)` to `.armed`). AppCoordinator
+    /// registers a closure here to drain its audio buffer + start streaming.
+    /// On a non-spawn `show()` (subsequent presses in the same session), this
+    /// fires synchronously inside `show()` so the same code path always works.
+    var onSpawnComplete: (() -> Void)?
+
+    /// Fired when the install **intro** animation finishes — i.e. the pill
+    /// has just transitioned from `.installSpawning(...)` to
+    /// `.installCompiling(progress: 0)`. AppCoordinator wires this up to
+    /// start driving rim progress (`setInstallProgress(_:)`) from the actual
+    /// model warm-up state.
+    ///
+    /// Distinct from `onSpawnComplete` because the install path doesn't
+    /// drain audio at this point — audio capture hasn't started yet on a
+    /// fresh-install hotkey press; it begins once the outro completes and
+    /// the pill is in `.armed`.
+    var onInstallIntroComplete: (() -> Void)?
+
+    /// Fired when the install **outro** animation finishes — pill has just
+    /// transitioned to `.armed`. AppCoordinator uses this as the cue to
+    /// start audio capture and streaming, the same way it would after
+    /// `onSpawnComplete` fires for the cinematic spawn path.
+    var onInstallOutroComplete: (() -> Void)?
+
+    /// **For tests only.** Production code should never read the view model
+    /// directly — go through `setPhase`, `updateLevel`, etc.
+    var viewModelForTesting: PillViewModel { viewModel }
+
     func show() {
+        // Defensive: if a previous spawn (cinematic OR install) is still
+        // running, cancel it cleanly so it doesn't overwrite the .armed
+        // phase below. show() is normally paired with hide() by the hotkey
+        // lifecycle, but double-press or other races can hit this — and a
+        // mid-install hotkey release on a different display would too.
+        viewModel.cancelSpawn()
+        viewModel.cancelInstall()
+
+        // Set the phase to the correct first frame BEFORE the panel becomes
+        // visible. Same flash-prevention rationale as showInstall(): without
+        // this, SwiftUI renders one frame at the previous phase (typically
+        // .idle from a freshly-created panel) before the spawn Task fires
+        // and updates the phase. See showInstall() for the full explanation.
+        if spawnPending {
+            viewModel.phase = .spawning(progress: 0)
+        } else {
+            viewModel.phase = .armed
+        }
+
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.setFrameOrigin(targetOrigin(for: panel))
@@ -40,7 +119,107 @@ final class PillWindowController {
             ctx.allowsImplicitAnimation = true
             panel.animator().alphaValue = 1
         }
-        viewModel.phase = .armed
+
+        if spawnPending {
+            spawnPending = false
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let completed = await self.viewModel.playSpawn()
+                if completed {
+                    self.onSpawnComplete?()
+                }
+            }
+        } else {
+            // Phase already set to .armed above; just dispatch the callback
+            // async (matching the cinematic path) so AppCoordinator's
+            // callback can't re-enter PillWindowController synchronously
+            // inside show(). Both paths now have the same re-entrancy
+            // behaviour.
+            let cb = onSpawnComplete
+            Task { @MainActor in cb?() }
+        }
+    }
+
+    /// Install-animation entry point. Called by AppCoordinator when the user
+    /// presses the hotkey while the model is still warming up
+    /// (`state == .loadingModel`). Plays the install intro animation, then
+    /// fires `onInstallIntroComplete` so the coordinator can start driving
+    /// `setInstallProgress(_:)` from the actual warm-up state.
+    ///
+    /// Does NOT consume the `spawnPending` flag — install and spawn are
+    /// distinct entry points. After the install outro completes, the next
+    /// press of the hotkey will play either a cinematic spawn (if pending)
+    /// or instant `.armed`, whichever the spawn-pending machinery dictates.
+    func showInstall() {
+        // Defensive cancels — same rationale as show(): we might be hitting
+        // this during a previous in-flight install (rapid model switch,
+        // recovery from an error path) or a previous cinematic spawn.
+        viewModel.cancelSpawn()
+        viewModel.cancelInstall()
+
+        // CRITICAL: set the phase to the install intro's first frame BEFORE
+        // the panel becomes visible. Without this, the panel briefly renders
+        // at the previous .idle phase (full 170pt pill with figures + bars)
+        // before the playInstallSpawn Task gets scheduled and flips the
+        // phase to .installSpawning(progress: 0) (63pt seed pill, figures
+        // invisible). The user sees a "full pill snaps small, then expands"
+        // ugly flash before the actual install choreography begins.
+        // Setting phase synchronously here means SwiftUI's first render of
+        // the panel after orderFrontRegardless is already at the seed-pill
+        // state — the very first frame the user sees.
+        viewModel.phase = .installSpawning(progress: 0)
+
+        let panel = panel ?? makePanel()
+        self.panel = panel
+        panel.setFrameOrigin(targetOrigin(for: panel))
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            ctx.allowsImplicitAnimation = true
+            panel.animator().alphaValue = 1
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // playInstallSpawn re-sets phase = .installSpawning(progress: 0)
+            // and then drives it to 1.0 over `duration`. The redundant
+            // re-set is harmless — SwiftUI dedupes Equatable @Published
+            // changes, and the timeline always starts at 0 anyway.
+            let completed = await self.viewModel.playInstallSpawn()
+            // playInstallSpawn ends with phase = .installCompiling(progress: 0).
+            // Fire the callback only on uncancelled completion so the
+            // coordinator doesn't start driving progress on a pill that
+            // already moved on (e.g. early hotkey release).
+            if completed {
+                self.onInstallIntroComplete?()
+            }
+        }
+    }
+
+    /// Push a new rim-progress value from the warm-up driver. Caller is
+    /// expected to clamp to `[0, 1]`; the underlying view model also clamps
+    /// defensively. No-op if the pill isn't currently in
+    /// `.installCompiling`, so out-of-band calls (e.g. progress arriving
+    /// after the user already released the hotkey and we ran the outro) are
+    /// silently ignored.
+    func setInstallProgress(_ p: Double) {
+        viewModel.setInstallProgress(p)
+    }
+
+    /// Play the install outro animation (rim fade + label fade + circle
+    /// traverse + bar cascade + comet ignite) and transition to `.armed`.
+    /// Fires `onInstallOutroComplete` on completion. Caller is expected to
+    /// have first set rim progress to 1.0 via `setInstallProgress(1.0)` so
+    /// the rim is visually full when the outro begins fading it out.
+    func playInstallOutro() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let completed = await self.viewModel.playInstallOutro()
+            if completed {
+                self.onInstallOutroComplete?()
+            }
+        }
     }
 
     /// Spec calls for the pill to scale slightly down (1.0 → 0.97) and fade
@@ -48,6 +227,8 @@ final class PillWindowController {
     /// CALayer transform in addition to fading alpha.
     func hide() {
         guard let panel else { return }
+        viewModel.cancelSpawn()    // safe no-op if no spawn in flight
+        viewModel.cancelInstall()  // ditto for install intro / outro
         viewModel.phase = .idle
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.22

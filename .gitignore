@@ -29,3 +29,8 @@ models/
 # AI assistant scratch + planning notes (local-only)
 .claude/
 .superpowers/
+
+# User-only design source artefacts (mockup ZIPs, working files).
+# The canonical mockups that ship with the repo live under
+# docs/superpowers/specs/assets/ — this folder is the import drop zone.
+Visual Aides/

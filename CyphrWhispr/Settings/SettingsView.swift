@@ -1,111 +1,262 @@
 import SwiftUI
 
-/// Root of the Settings window. Custom-built shell so we can apply the dark
-/// gradient backdrop, our own segmented tab control with the violet glow on
-/// the active tab, and consistent spacing across the three tabs.
+/// Root of the Settings window — sidebar shell + content panel. Five fixed
+/// nav items (General, Models, History, Shortcut, About) match the high-
+/// fidelity mockup. The sidebar is always visible; selecting a row swaps in
+/// the matching tab view on the right.
+///
+/// Look is intentionally retro-utility: dark slate background, monospaced
+/// pixel typography (Monaspace Krypton), a hardcoded soft purple pill behind
+/// the selected sidebar row with an accent-coloured left bar. Window has its
+/// own custom title strip so the title text is centred (macOS doesn't centre
+/// titles in `.titled` + `.fullSizeContentView` windows).
 struct SettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
-        case shortcut = "Shortcut"
+        case general  = "General"
         case models   = "Models"
+        case history  = "History"
+        case shortcut = "Shortcut"
         case about    = "About"
         var id: String { rawValue }
     }
 
-    @State private var tab: Tab = .shortcut
+    @State private var tab: Tab = .general
     @EnvironmentObject private var prefs: PreferencesStore
 
+    /// Fixed height for our drawn title strip. Matches the standard macOS
+    /// title bar height (28pt) so the centred title sits exactly in line
+    /// with the traffic lights and the sidebar / content panel start
+    /// immediately below — no extra empty band.
+    private static let titleStripHeight: CGFloat = 28
+
     var body: some View {
-        ZStack {
-            // Vertical dark gradient — same palette as the pill window so
-            // they read as part of one app.
-            SettingsDesign.windowBackground
+        ZStack(alignment: .top) {
+            // Background fill that runs all the way under the title strip.
+            SettingsDesign.pageBackground
                 .ignoresSafeArea()
 
-            VStack(spacing: 18) {
-                // Custom segmented tabs.
-                SegmentedTabs(selection: $tab)
-                    .padding(.top, 12)
-                    .environmentObject(prefs)
+            HStack(spacing: 0) {
+                Sidebar(selection: $tab)
+                    .frame(width: 232)
+                    .frame(maxHeight: .infinity)
+                    .background(SettingsDesign.sidebarBackground)
 
-                // Active tab content.
-                Group {
-                    switch tab {
-                    case .shortcut: ShortcutTabView()
-                    case .models:   ModelsTabView()
-                    case .about:    AboutTabView()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 18)
+                // Vertical hairline between sidebar and content.
+                Rectangle()
+                    .fill(SettingsDesign.divider)
+                    .frame(width: 1)
+                    .frame(maxHeight: .infinity)
+
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(SettingsDesign.pageBackground)
+            }
+            .padding(.top, Self.titleStripHeight)
+
+            // Centred title overlay sitting on top of the system title bar.
+            // The bar itself is transparent (`.fullSizeContentView` +
+            // `titleVisibility = .hidden`), so this is what the user sees.
+            titleStrip
+        }
+        .frame(minWidth: 880, idealWidth: 960,  maxWidth: .infinity,
+               minHeight: 600, idealHeight: 720, maxHeight: .infinity)
+        .preferredColorScheme(.dark)
+    }
+
+    /// Custom title strip across the top of the window. Centred Monaspace
+    /// title to match the mockup; the system title is hidden so the strip
+    /// stands alone.
+    private var titleStrip: some View {
+        Text("CyphrWhispr — Settings")
+            .font(SettingsDesign.krBody(size: 13, weight: .medium))
+            .foregroundStyle(SettingsDesign.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.titleStripHeight)
+            // The window uses `.fullSizeContentView` so SwiftUI applies a
+            // top safe-area inset matching the 28pt title bar. Without
+            // ignoring it the title `Text` lands BELOW the traffic-light
+            // row instead of vertically centred next to it. The background
+            // `Color` already ignores the safe area for the same reason.
+            .ignoresSafeArea(edges: .top)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        Group {
+            switch tab {
+            case .general:  GeneralTabView()
+            case .models:   ModelsTabView()
+            case .history:  HistoryTabView()
+            case .shortcut: ShortcutTabView()
+            case .about:    AboutTabView()
             }
         }
-        // Min size keeps the layout from collapsing; no max so the user can
-        // resize the window freely. The NSWindow itself enforces an even tighter
-        // floor via `minSize` in SettingsWindowController.
-        .frame(minWidth: 460, idealWidth: 520, maxWidth: .infinity,
-               minHeight: 540, idealHeight: 640, maxHeight: .infinity)
-        .preferredColorScheme(.dark)
+        .transition(.opacity)
+        .id(tab) // force re-render so per-tab .onAppear refreshes fire
     }
 }
 
-// MARK: - Segmented tab control
+// MARK: - Sidebar
 
-/// Capsule-segmented control inspired by macOS Settings but restyled to match
-/// the design: muted-white text on inactive segments, soft violet pill behind
-/// the selected one with a thin violet outline. Animates the pill across with
-/// `matchedGeometryEffect` so the swap feels native.
-private struct SegmentedTabs: View {
+/// Left-side nav. "SETTINGS" header at top, five rows beneath. Selected row
+/// is a soft purple pill (`#241F3B` — fixed, not derived from accent) with
+/// a left bar in the user's accent. Inactive rows show a gray `▸` chevron
+/// before the label.
+private struct Sidebar: View {
     @Binding var selection: SettingsView.Tab
-    @Namespace private var ns
-    @EnvironmentObject private var prefs: PreferencesStore
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(SettingsView.Tab.allCases) { tab in
-                let isActive = (tab == selection)
-                Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
-                        selection = tab
-                    }
-                } label: {
-                    Text(tab.rawValue)
-                        .font(.system(size: 13, weight: isActive ? .semibold : .medium))
-                        .foregroundStyle(isActive
-                                         ? SettingsDesign.textPrimary
-                                         : SettingsDesign.textSecondary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 7)
-                        .background(
-                            ZStack {
-                                if isActive {
-                                    Capsule()
-                                        .fill(prefs.activeTabFill)
-                                        .overlay(
-                                            Capsule()
-                                                .strokeBorder(prefs.accent.opacity(0.55),
-                                                              lineWidth: 1)
-                                        )
-                                        // Soft outer glow — sells "active".
-                                        .shadow(color: prefs.accent.opacity(0.45),
-                                                radius: 8, x: 0, y: 0)
-                                        .matchedGeometryEffect(id: "tabPill", in: ns)
-                                }
+        VStack(alignment: .leading, spacing: 0) {
+            // "SETTINGS" header — tracked-out and dim, anchors the top of
+            // the sidebar. Top padding matches the mockup's ~26pt offset
+            // from the start of the sidebar.
+            Text("SETTINGS")
+                .font(SettingsDesign.krSidebarHeader())
+                .tracking(2.4)
+                .foregroundStyle(SettingsDesign.sidebarHeader)
+                .padding(.horizontal, 22)
+                .padding(.top, 26)
+                .padding(.bottom, 16)
+
+            // Five fixed nav items, in mockup order. 4pt inter-row spacing
+            // — combined with the row's 36pt height that gives the ~40pt
+            // rhythm the mockup uses.
+            VStack(spacing: 4) {
+                ForEach(SettingsView.Tab.allCases) { tab in
+                    SidebarRow(
+                        title: tab.rawValue,
+                        isActive: tab == selection,
+                        onTap: {
+                            withAnimation(.easeInOut(duration: 0.14)) {
+                                selection = tab
                             }
-                        )
-                        .contentShape(Rectangle())
+                        }
+                    )
                 }
-                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 10)
+
+            Spacer(minLength: 0)
         }
-        .padding(4)
-        .background(
-            Capsule()
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.8)
-                )
-        )
+    }
+}
+
+private struct SidebarRow: View {
+    let title: String
+    let isActive: Bool
+    let onTap: () -> Void
+
+    @EnvironmentObject private var prefs: PreferencesStore
+    @State private var isHovered = false
+
+    /// Row content height — explicit so the active pill renders at the
+    /// mockup-spec size (~36pt) instead of becoming greedy.
+    private let rowHeight: CGFloat = 36
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 14) {
+                // Active state shows a filled accent dot; inactive shows a
+                // small chevron. Both occupy the same 14pt slot so the
+                // labels line up across rows.
+                ZStack {
+                    if isActive {
+                        Circle()
+                            .fill(prefs.accent)
+                            .frame(width: 6, height: 6)
+                    } else {
+                        Text("▸")
+                            .font(SettingsDesign.krBody(size: 11, weight: .medium))
+                            .foregroundStyle(SettingsDesign.textTertiary)
+                    }
+                }
+                .frame(width: 12, alignment: .center)
+
+                Text(title)
+                    .font(SettingsDesign.krSidebarItem(size: 13, active: isActive))
+                    .foregroundStyle(isActive
+                                     ? SettingsDesign.textPrimary
+                                     : SettingsDesign.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 14)
+            .frame(height: rowHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Selection pill — fixed dark purple (#241F3B) per mockup spec.
+            // Attached as a `.background` so it tracks the row's intrinsic
+            // size rather than becoming greedy inside a ZStack.
+            .background(
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isActive
+                              ? SettingsDesign.sidebarSelectionFill
+                              : (isHovered
+                                 ? Color.white.opacity(0.03)
+                                 : Color.clear))
+                    if isActive {
+                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                            .fill(prefs.accent)
+                            .frame(width: 3, height: 18)
+                            .padding(.leading, 1)
+                    }
+                }
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
+// MARK: - Tab content header
+
+/// Shared page header used at the top of every tab — page title and secondary
+/// subtitle line. Sized + spaced to match the mockup hierarchy. The title
+/// size is calibrated so descenders never crowd the subtitle.
+struct SettingsPageHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(SettingsDesign.krPageTitle(size: 26))
+                .foregroundStyle(SettingsDesign.textPrimary)
+            Text(subtitle)
+                .font(SettingsDesign.krPageSubtitle(size: 12.5))
+                .foregroundStyle(SettingsDesign.textSecondary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A shared per-tab container. Provides consistent horizontal margins, the
+/// page header, and a scrollable body. Used by every tab so the layout is
+/// uniform. All inter-element gaps come from `SettingsDesign` tokens so
+/// the rhythm is consistent.
+struct SettingsTabContainer<Body_: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder let content: () -> Body_
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: SettingsDesign.cardSpacing) {
+                SettingsPageHeader(title: title, subtitle: subtitle)
+                    .padding(.bottom, SettingsDesign.pageHeaderToFirstCard
+                                       - SettingsDesign.cardSpacing)
+                content()
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 36)
+            .padding(.top, 32)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }

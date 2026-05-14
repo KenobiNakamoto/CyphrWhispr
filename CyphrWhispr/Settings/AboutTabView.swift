@@ -1,9 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// Settings → About tab. Brand panel + accent-color picker + four-feature
-/// value prop + footer with version/links. Kept deliberately minimal — this
-/// is a sticker, not a docs page.
+/// Settings → About — restyled to match the high-fidelity mockup.
+/// Centered hero (app icon glow + name + version + description), followed by
+/// a four-row card: Accent color swatch row, Source link, License badge,
+/// Privacy badges.
 struct AboutTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
 
@@ -15,123 +16,127 @@ struct AboutTabView: View {
     }
 
     var body: some View {
-        // ScrollView so the layout stays usable when the user shrinks the
-        // window vertically.
         ScrollView(.vertical, showsIndicators: false) {
-            content
-                .padding(.bottom, 4)
+            VStack(alignment: .center, spacing: 28) {
+                hero
+                aboutCard
+                    .frame(maxWidth: 720)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 36)
+            .padding(.top, 36)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity)
         }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        VStack(spacing: 14) {
-            // Brand card.
-            SettingsCard {
-                HStack(alignment: .center, spacing: 14) {
-                    AppIconBadge(size: 64)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("CyphrWhispr")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(SettingsDesign.textPrimary)
-                        Text("Local, private, fast speech-to-text\nfor any text field on your Mac.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(SettingsDesign.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                }
-            }
+    // MARK: - Hero
 
-            // Accent color picker.
-            AccentPickerCard()
+    private var hero: some View {
+        VStack(spacing: 12) {
+            AppIconHero(size: 108)
+            Text("CyphrWhispr")
+                .font(SettingsDesign.krPageTitle(size: 28))
+                .foregroundStyle(SettingsDesign.textPrimary)
+                .padding(.top, 4)
+            Text("v\(version) · Build \(build)")
+                .font(SettingsDesign.krCaption(size: 11.5))
+                .foregroundStyle(SettingsDesign.textTertiary)
+                .padding(.top, -6)
+            Text("A native macOS dictation widget — local, encrypted, and intentionally minimal. Press a key, speak, watch words land at your cursor.")
+                .font(SettingsDesign.krPageSubtitle(size: 12.5))
+                .foregroundStyle(SettingsDesign.textSecondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 480)
+                .padding(.top, 4)
+        }
+    }
 
-            // Feature list — separate card.
-            SettingsCard(padding: 0) {
-                VStack(spacing: 0) {
-                    FeatureRow(
-                        icon: "lock.shield.fill",
-                        title: "Private by default",
-                        subtitle: "Everything stays on your device."
-                    )
-                    rowDivider
-                    FeatureRow(
-                        icon: "bolt.fill",
-                        title: "Fast & local",
-                        subtitle: "Optimized for Apple Silicon."
-                    )
-                    rowDivider
-                    FeatureRow(
-                        icon: "chevron.left.forwardslash.chevron.right",
-                        title: "Open source",
-                        subtitle: "Transparent, auditable, community-driven."
-                    )
-                    rowDivider
-                    FeatureRow(
-                        icon: "heart.fill",
-                        title: "Built with care",
-                        subtitle: "For creators, researchers, and privacy champions."
-                    )
-                }
-            }
+    // MARK: - About card (4 rows)
 
-            Spacer(minLength: 0)
-
-            // Footer.
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Version \(version) (\(build))")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(SettingsDesign.textPrimary)
-                    Text("© 2026 CyphrWhispr. All rights reserved.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(SettingsDesign.textTertiary)
-                }
-                Spacer()
-                Button {
-                    if let url = URL(string: "https://cyphrwhispr.app") {
-                        NSWorkspace.shared.open(url)
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("Website")
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                }
-                .buttonStyle(GhostButtonStyle())
-
-                Button("Check for updates") {
-                    // Wired to Sparkle (or equivalent) in a future phase.
-                }
-                .buttonStyle(GhostButtonStyle())
+    private var aboutCard: some View {
+        SettingsCard {
+            VStack(spacing: 0) {
+                accentRow
+                CardRowDivider()
+                sourceRow
+                CardRowDivider()
+                licenseRow
+                CardRowDivider()
+                privacyRow
             }
         }
     }
 
-    private var rowDivider: some View {
-        Divider()
-            .overlay(SettingsDesign.cardStroke)
-            .padding(.horizontal, 16)
+    private var accentRow: some View {
+        CardRow(
+            title: "Accent colour",
+            description: "Used by the pill's comet rim and the Settings chrome."
+        ) {
+            AccentSwatchRow()
+        }
+    }
+
+    private var sourceRow: some View {
+        CardRow(
+            title: "Source",
+            description: "github.com/KenobiNakamoto/CyphrWhispr"
+        ) {
+            Button("[View on GitHub]") {
+                if let url = URL(string: "https://github.com/KenobiNakamoto/CyphrWhispr") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .buttonStyle(NativeMacButtonStyle())
+            .accessibilityLabel("View source on GitHub")
+        }
+    }
+
+    private var licenseRow: some View {
+        CardRow(
+            title: "License",
+            description: nil
+        ) {
+            TerminalBadge(label: "MIT", glyph: "*", tint: SettingsDesign.badgeMagenta)
+        }
+    }
+
+    private var privacyRow: some View {
+        CardRow(
+            title: "Privacy",
+            description: nil
+        ) {
+            HStack(spacing: 8) {
+                TerminalBadge(label: "100% LOCAL",
+                              glyph: "•",
+                              tint: SettingsDesign.badgeSuccess)
+                TerminalBadge(label: "ENCRYPTED",
+                              glyph: "#",
+                              tint: SettingsDesign.badgeBlue)
+            }
+        }
     }
 }
 
-// MARK: - Brand badge
+// MARK: - App icon hero
 
-/// Small rounded-square that shows the CyphrWhispr logo (down-triangle +
-/// filled circle) on a dark gradient background — a miniature of the app
-/// icon that doesn't require pulling pixels out of `Assets.xcassets`.
-private struct AppIconBadge: View {
-    var size: CGFloat = 64
+/// Centered, glowing app icon — the focal point of the About hero. Renders
+/// the same down-triangle + filled-circle glyph pair used in the menu bar,
+/// scaled up onto a dark rounded square with an accent glow. Matches the
+/// mockup's "icon with purple rim" exactly.
+private struct AppIconHero: View {
+    var size: CGFloat = 128
 
     @EnvironmentObject private var prefs: PreferencesStore
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+        RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
             .fill(
                 LinearGradient(
                     colors: [
-                        SettingsDesign.bgTop,
+                        Color(red: 0.10, green: 0.10, blue: 0.13),
                         Color.black,
                     ],
                     startPoint: .top,
@@ -139,39 +144,38 @@ private struct AppIconBadge: View {
                 )
             )
             .overlay(
-                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                    .strokeBorder(prefs.accent.opacity(0.40), lineWidth: 1)
+                RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+                    .strokeBorder(prefs.accent.opacity(0.55), lineWidth: 1.5)
             )
-            .shadow(color: prefs.accent.opacity(0.45), radius: 14, x: 0, y: 0)
+            .shadow(color: prefs.accent.opacity(0.50), radius: 24, x: 0, y: 0)
             .frame(width: size, height: size)
             .overlay(
-                HStack(spacing: size * 0.06) {
+                HStack(spacing: size * 0.07) {
                     Image(systemName: "play.fill")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .rotationEffect(.degrees(90))
-                        .frame(width: size * 0.26, height: size * 0.26)
+                        .frame(width: size * 0.24, height: size * 0.24)
                         .foregroundStyle(.white)
                     Circle()
                         .fill(.white)
-                        .frame(width: size * 0.24, height: size * 0.24)
+                        .frame(width: size * 0.22, height: size * 0.22)
                 }
             )
     }
 }
 
-// MARK: - Accent color picker
+// MARK: - Accent swatch row
 
-/// Lets the user repaint every accent in the app — Settings tabs, the active
-/// row chips, the pill's comet halo — by picking a new color. Six curated
-/// presets (the violet ships as default) for one-click change, plus a system
-/// `ColorPicker` for "I want something exact."
-private struct AccentPickerCard: View {
+/// Six circular swatches + a custom-color picker. The currently-selected
+/// swatch grows slightly and gets a white inner ring + accent glow; click
+/// any swatch to make it the new app-wide accent.
+private struct AccentSwatchRow: View {
     @EnvironmentObject private var prefs: PreferencesStore
 
-    /// Curated swatches. Hand-picked to look good on dark glass with the same
-    /// rim-glow treatment as the brand violet — saturated mid-tones, no
-    /// pastels, no muddy darks. Order goes warm → cool → green so the row
+    /// Curated palette — saturated mid-tones that all look good on dark
+    /// glass with the same rim-glow treatment. Same six as before; the
+    /// brand violet ships as default. Order goes warm → cool so the row
     /// reads as a spectrum.
     private static let presets: [(name: String, hex: String)] = [
         ("Violet",  "#7C4DFF"),
@@ -182,9 +186,6 @@ private struct AccentPickerCard: View {
         ("Cobalt",  "#3B82F6"),
     ]
 
-    /// Bridges SwiftUI's ColorPicker (which wants a `Binding<Color>`) into our
-    /// hex-backed prefs. Reads compute from `accent`, writes go through
-    /// `setAccent` so we keep the round-trip-safe hex form.
     private var colorBinding: Binding<Color> {
         Binding(
             get: { prefs.accent },
@@ -193,63 +194,29 @@ private struct AccentPickerCard: View {
     }
 
     var body: some View {
-        SettingsCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center, spacing: 12) {
-                    SettingsIconBadge(systemName: "paintpalette.fill")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Accent color")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(SettingsDesign.textPrimary)
-                        Text("Personalize highlights, glows, and active states.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(SettingsDesign.textSecondary)
-                    }
-                    Spacer()
-                }
-
-                // Preset row. HStack with even spacing so the swatches read as
-                // siblings rather than a list.
-                HStack(spacing: 10) {
-                    ForEach(Self.presets, id: \.hex) { preset in
-                        SwatchButton(
-                            color: Color(hex: preset.hex) ?? PreferencesStore.defaultAccent,
-                            isSelected: prefs.accentHex.caseInsensitiveCompare(preset.hex) == .orderedSame,
-                            label: preset.name
-                        ) {
-                            prefs.accentHex = preset.hex
-                        }
-                    }
-
-                    // System ColorPicker for free-form choice. Hides its own
-                    // label so we can wrap a SwatchButton-shaped trigger
-                    // around a tiny invisible picker for a consistent look.
-                    ColorPicker("Custom accent", selection: colorBinding, supportsOpacity: false)
-                        .labelsHidden()
-                        .frame(width: 26, height: 26)
-                        .help("Pick a custom accent color")
-                }
-
-                HStack {
-                    Text("Current: \(prefs.accentHex.uppercased())")
-                        .font(.system(size: 11, weight: .medium).monospacedDigit())
-                        .foregroundStyle(SettingsDesign.textTertiary)
-                    Spacer()
-                    if prefs.accentHex.caseInsensitiveCompare(PreferencesStore.defaultAccentHex) != .orderedSame {
-                        Button("Reset to brand violet") {
-                            prefs.resetAccent()
-                        }
-                        .buttonStyle(GhostButtonStyle())
-                    }
+        HStack(spacing: 12) {
+            ForEach(Self.presets, id: \.hex) { preset in
+                SwatchButton(
+                    color: Color(hex: preset.hex) ?? PreferencesStore.defaultAccent,
+                    isSelected: prefs.accentHex.caseInsensitiveCompare(preset.hex) == .orderedSame,
+                    label: preset.name
+                ) {
+                    prefs.accentHex = preset.hex
                 }
             }
+            // System color picker for "I want something exact" — sits at
+            // the end of the curated row so the row reads as
+            // "presets + custom" left-to-right.
+            ColorPicker("Custom accent", selection: colorBinding, supportsOpacity: false)
+                .labelsHidden()
+                .frame(width: 24, height: 24)
+                .help("Pick a custom accent color")
         }
     }
 }
 
-/// One circular swatch in the preset row. Renders the chosen color with a
-/// subtle inner gradient so it looks like a chip, not a flat dot, and shows
-/// a white hairline + matching glow when selected.
+/// One circular swatch in the preset row. The selected one grows ~10%,
+/// gains a white inner ring, and casts a glow in its own color.
 private struct SwatchButton: View {
     let color: Color
     let isSelected: Bool
@@ -258,57 +225,25 @@ private struct SwatchButton: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(
-                        // Gentle top-down highlight so the swatch reads as
-                        // dimensional rather than a paint chip.
-                        LinearGradient(
-                            colors: [color.opacity(0.95), color],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [color.opacity(0.95), color],
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.white.opacity(isSelected ? 0.95 : 0.18),
-                                          lineWidth: isSelected ? 2 : 1)
-                    )
-                    .shadow(color: color.opacity(isSelected ? 0.65 : 0.0),
-                            radius: isSelected ? 8 : 0, x: 0, y: 0)
-                    .frame(width: 26, height: 26)
-            }
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(isSelected ? 1.0 : 0.16),
+                                      lineWidth: isSelected ? 1.8 : 1)
+                )
+                .shadow(color: color.opacity(isSelected ? 0.60 : 0.0),
+                        radius: isSelected ? 8 : 0, x: 0, y: 0)
+                .frame(width: 24, height: 24)
         }
         .buttonStyle(.plain)
         .help(label)
         .accessibilityLabel(label)
-    }
-}
-
-// MARK: - Feature row
-
-private struct FeatureRow: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            SettingsIconBadge(systemName: icon, size: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(SettingsDesign.textPrimary)
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(SettingsDesign.textSecondary)
-            }
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(SettingsDesign.textTertiary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 }

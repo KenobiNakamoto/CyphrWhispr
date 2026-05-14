@@ -22,4 +22,201 @@ final class CyphrWhisprTests: XCTestCase {
         XCTAssertEqual(read.count, 4)
         XCTAssertEqual(read.last, 6)
     }
+
+    @MainActor
+    func testActiveModelChange_postsNotification() async {
+        let store = PreferencesStore.shared
+        let initial = store.activeModelID
+        // Defer the restore so cleanup runs even if the expectation times out
+        // or a later assertion crashes — `PreferencesStore.shared` is a
+        // process-wide singleton backed by UserDefaults, so a leaked value
+        // would persist across test runs and pollute the developer's prefs.
+        defer { store.activeModelID = initial }
+
+        let other = (initial == "openai_whisper-small.en")
+            ? "openai_whisper-tiny.en"
+            : "openai_whisper-small.en"
+
+        let exp = expectation(forNotification: .activeModelDidChange,
+                              object: store,
+                              handler: nil)
+
+        store.activeModelID = other
+        await fulfillment(of: [exp], timeout: 1.0)
+    }
+
+    @MainActor
+    func testPlaySpawn_progressesFromZeroToArmed() async {
+        let vm = PillViewModel()
+        XCTAssertEqual(vm.phase, .idle)
+
+        // Use a short duration so the test runs quickly. The implementation
+        // is duration-agnostic — same logic, faster wall-clock.
+        await vm.playSpawn(duration: 0.20)
+
+        XCTAssertEqual(vm.phase, .armed,
+                       "spawn should complete by setting phase to .armed")
+    }
+
+    @MainActor
+    func testCancelSpawn_stopsTimeline_keepsLastPhase() async {
+        let vm = PillViewModel()
+        let task = Task { await vm.playSpawn(duration: 1.0) }
+
+        // Let the spawn run for a slice, then cancel.
+        try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+        vm.cancelSpawn()
+        await task.value
+
+        // Phase should still be .spawning(...) — cancel does NOT advance to .armed.
+        if case .spawning = vm.phase {
+            // pass
+        } else {
+            XCTFail("after cancellation, phase should still be .spawning, got \(vm.phase)")
+        }
+    }
+
+    @MainActor
+    func testPillController_spawnsOnFirstShow_thenInstantOnSecond() async {
+        let controller = PillWindowController()
+
+        // First show — should set phase to .spawning(progress: 0).
+        controller.show()
+        try? await Task.sleep(nanoseconds: 50_000_000)  // give playSpawn one tick
+
+        if case .spawning = controller.viewModelForTesting.phase {
+            // pass
+        } else {
+            XCTFail("first show() must trigger .spawning phase, got \(controller.viewModelForTesting.phase)")
+        }
+
+        // Cancel + hide
+        controller.hide()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // Second show — should be instant .armed.
+        controller.show()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(controller.viewModelForTesting.phase, .armed,
+                       "second show() in same session must skip the spawn")
+
+        controller.hide()
+    }
+
+    @MainActor
+    func testPillController_replaysSpawnAfterModelChange() async {
+        let controller = PillWindowController()
+
+        controller.show()  // burns the first spawn
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        controller.hide()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // Simulate the user changing the active model in Settings.
+        // Must post with PreferencesStore.shared as the object since the
+        // controller scopes its observer to that specific sender.
+        NotificationCenter.default.post(name: .activeModelDidChange,
+                                        object: PreferencesStore.shared)
+        try? await Task.sleep(nanoseconds: 50_000_000)  // let observer fire
+
+        controller.show()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        if case .spawning = controller.viewModelForTesting.phase {
+            // pass — spawnPending was reset by the notification
+        } else {
+            XCTFail("show() after activeModelDidChange must replay spawn, got \(controller.viewModelForTesting.phase)")
+        }
+        controller.hide()
+    }
+
+    @MainActor
+    func testPillController_firesOnSpawnCompleteOnInstantPath() async {
+        let controller = PillWindowController()
+
+        // Burn the first show (cinematic spawn) and hide so the next show()
+        // takes the instant path.
+        controller.show()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        controller.hide()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // Wire the callback now (after the cinematic spawn has finished or
+        // been cancelled, so we don't catch its callback by accident).
+        var fired = false
+        controller.onSpawnComplete = { fired = true }
+
+        // Instant-path show should fire onSpawnComplete async (matching
+        // the cinematic path's async dispatch).
+        controller.show()
+        try? await Task.sleep(nanoseconds: 100_000_000)  // give the Task a tick
+
+        XCTAssertTrue(fired, "instant path must fire onSpawnComplete")
+        controller.hide()
+    }
+
+    @MainActor
+    func testPlayInstallSpawn_progressesFromZeroToCompiling() async {
+        let vm = PillViewModel()
+        let didFinish = await vm.playInstallSpawn(duration: 0.05)
+        XCTAssertTrue(didFinish)
+        if case .installCompiling(let p) = vm.phase {
+            XCTAssertEqual(p, 0, accuracy: 0.001)
+        } else {
+            XCTFail("Expected .installCompiling(0), got \(vm.phase)")
+        }
+    }
+
+    @MainActor
+    func testSetInstallProgress_updatesWhenInCompilingPhase() {
+        let vm = PillViewModel()
+        vm.phase = .installCompiling(progress: 0)
+        vm.setInstallProgress(0.42)
+        if case .installCompiling(let p) = vm.phase {
+            XCTAssertEqual(p, 0.42, accuracy: 0.001)
+        } else {
+            XCTFail("Expected .installCompiling(0.42), got \(vm.phase)")
+        }
+    }
+
+    @MainActor
+    func testSetInstallProgress_clampsToZeroOne() {
+        let vm = PillViewModel()
+        vm.phase = .installCompiling(progress: 0)
+        vm.setInstallProgress(1.5)
+        if case .installCompiling(let p) = vm.phase {
+            XCTAssertEqual(p, 1.0, accuracy: 0.001)
+        } else { XCTFail() }
+        vm.setInstallProgress(-0.5)
+        if case .installCompiling(let p) = vm.phase {
+            XCTAssertEqual(p, 0.0, accuracy: 0.001)
+        } else { XCTFail() }
+    }
+
+    @MainActor
+    func testSetInstallProgress_isNoOpOutsideCompilingPhase() {
+        let vm = PillViewModel()
+        vm.phase = .idle
+        vm.setInstallProgress(0.5)
+        XCTAssertEqual(vm.phase, .idle)
+    }
+
+    @MainActor
+    func testPlayInstallOutro_progressesToArmed() async {
+        let vm = PillViewModel()
+        vm.phase = .installCompiling(progress: 1.0)
+        let didFinish = await vm.playInstallOutro(duration: 0.05)
+        XCTAssertTrue(didFinish)
+        XCTAssertEqual(vm.phase, .armed)
+    }
+
+    @MainActor
+    func testCancelInstall_returnsFalseFromInflightSpawn() async {
+        let vm = PillViewModel()
+        let task = Task { await vm.playInstallSpawn(duration: 1.0) }
+        try? await Task.sleep(nanoseconds: 30_000_000)  // 30ms in
+        vm.cancelInstall()
+        let didFinish = await task.value
+        XCTAssertFalse(didFinish)
+    }
 }

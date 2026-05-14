@@ -16,8 +16,35 @@ final class PreferencesStore: ObservableObject {
 
     private enum Key {
         static let activeModelID = "Whisper.activeModelID"
+        static let selectedLanguageCode = "Whisper.selectedLanguageCode"
         static let didCompleteFirstRun = "App.didCompleteFirstRun"
         static let accentHex = "App.accentColorHex"
+        static let polishEnabled = "Polish.enabled"
+        static let polishPromptIsCustomised = "Polish.promptIsCustomised"
+        static let polishCustomPrompt = "Polish.customPrompt"
+        // General tab — new in the sidebar refactor.
+        static let launchAtLogin = "General.launchAtLogin"
+        static let hideMenuBarIcon = "General.hideMenuBarIcon"
+        static let activationMode = "General.activationMode"
+        static let inhibitWhileTyping = "Shortcut.inhibitWhileTyping"
+    }
+
+    /// How the hotkey turns dictation on and off. **Push-to-talk** (default)
+    /// keeps the user holding the chord; release ends the session. **Toggle**
+    /// flips on a single press and off on the next press — easier for long
+    /// dictation but slightly harder to recover from accidental triggers.
+    /// Read by `HotkeyManager` at install time; changing this restarts the
+    /// hotkey wiring so the new mode takes effect immediately.
+    enum ActivationMode: String, CaseIterable, Identifiable, Codable {
+        case pushToTalk = "push_to_talk"
+        case toggle = "toggle"
+        var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .pushToTalk: return "Push to talk"
+            case .toggle:     return "Toggle"
+            }
+        }
     }
 
     /// The original brand violet — what the app ships with and what the
@@ -31,6 +58,32 @@ final class PreferencesStore: ObservableObject {
         didSet {
             guard activeModelID != oldValue else { return }
             UserDefaults.standard.set(activeModelID, forKey: Key.activeModelID)
+            // Broadcast so cross-cutting listeners (PillWindowController
+            // for the spawn animation reset) can react without a tight
+            // Combine binding back into the prefs store.
+            NotificationCenter.default.post(name: .activeModelDidChange, object: self)
+        }
+    }
+
+    /// User's transcription language preference. Either a Whisper language
+    /// code (`"en"`, `"es"`, `"ja"`, …) to pin a specific language, or
+    /// `TranscriptionLanguageMode.autoCode` (`"auto"`) to auto-detect on
+    /// the first audio chunk and lock for the rest of the session.
+    ///
+    /// Validity is enforced: an unknown code (e.g. corrupted UserDefaults
+    /// value, or one removed from the catalog in a future release)
+    /// silently falls back to `"auto"` rather than blowing up.
+    ///
+    /// Effective on the **next** hotkey press, never an in-flight session
+    /// (the engine reads this once at `startStream` and locks it).
+    /// English-only (`.en`) model variants ignore this setting — they can
+    /// only decode English regardless. The Settings UI hides the picker
+    /// in that case.
+    @Published var selectedLanguageCode: String {
+        didSet {
+            guard selectedLanguageCode != oldValue else { return }
+            UserDefaults.standard.set(selectedLanguageCode,
+                                      forKey: Key.selectedLanguageCode)
         }
     }
 
@@ -51,11 +104,110 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
+    // MARK: - Polish (Apple Foundation Models cleanup)
+    //
+    // Off by default in v1 — polishing is an opt-in. The user toggles it on in
+    // Settings → Polish, where they can also see and edit the cleanup prompt.
+    // Three pieces of state:
+    //   • `polishEnabled`              — the master switch
+    //   • `polishPromptIsCustomised`   — true once the user has clicked "Customise prompt"
+    //   • `polishCustomPrompt`         — the user-edited prompt; only used when customised
+    //
+    // The "effective" prompt is computed below: returns the custom prompt if
+    // the user has customised, otherwise the default from `CleanupPrompt`.
+
+    /// Master switch: should we run a cleanup pass on the final transcription?
+    /// Even when ON, the cleaner respects OS availability — see
+    /// `TranscriptionCleaner.availability` for the actual feature gate.
+    @Published var polishEnabled: Bool {
+        didSet {
+            guard polishEnabled != oldValue else { return }
+            UserDefaults.standard.set(polishEnabled, forKey: Key.polishEnabled)
+        }
+    }
+
+    /// True once the user has clicked "Customise prompt" and edited the
+    /// cleanup instructions away from the default. While false, the default
+    /// prompt is used and the prompt UI shows the read-only baseline.
+    @Published var polishPromptIsCustomised: Bool {
+        didSet {
+            guard polishPromptIsCustomised != oldValue else { return }
+            UserDefaults.standard.set(polishPromptIsCustomised, forKey: Key.polishPromptIsCustomised)
+        }
+    }
+
+    /// User-edited cleanup prompt. Only consulted when
+    /// `polishPromptIsCustomised == true`. Stored separately from the toggle
+    /// so the user's edits survive flipping customised → default → customised.
+    @Published var polishCustomPrompt: String {
+        didSet {
+            guard polishCustomPrompt != oldValue else { return }
+            UserDefaults.standard.set(polishCustomPrompt, forKey: Key.polishCustomPrompt)
+        }
+    }
+
+    // MARK: - General tab
+    //
+    // Three switches and one mode-picker that live in Settings → General.
+    // All wired to real behaviour: launch-at-login flips an `SMAppService`
+    // registration, hide-menu-bar toggles the `NSStatusItem`, activation
+    // mode rebinds the hotkey callbacks in `HotkeyManager`, and inhibit-
+    // while-typing is read by `HotkeyManager` before invoking onPress.
+
+    /// Register CyphrWhispr to start when the user signs in. Backed by
+    /// `SMAppService.mainApp` — registration is reversible from System
+    /// Settings → General → Login Items. Failures (sandbox missing,
+    /// service not approved, etc.) are logged but don't crash; the toggle
+    /// is set back to false so the user sees the request didn't stick.
+    @Published var launchAtLogin: Bool {
+        didSet {
+            guard launchAtLogin != oldValue else { return }
+            UserDefaults.standard.set(launchAtLogin, forKey: Key.launchAtLogin)
+            NotificationCenter.default.post(name: .launchAtLoginDidChange, object: self)
+        }
+    }
+
+    /// Hide the menu-bar status item. The hotkey still works — the icon is
+    /// just suppressed for users who prefer a fully-invisible menu bar
+    /// (think: Bartender users who don't need yet another icon up there).
+    /// `StatusItemController` observes this and adds/removes the
+    /// `NSStatusItem` accordingly.
+    @Published var hideMenuBarIcon: Bool {
+        didSet {
+            guard hideMenuBarIcon != oldValue else { return }
+            UserDefaults.standard.set(hideMenuBarIcon, forKey: Key.hideMenuBarIcon)
+            NotificationCenter.default.post(name: .hideMenuBarIconDidChange, object: self)
+        }
+    }
+
+    /// Push-to-talk vs Toggle. `HotkeyManager` reads this when wiring up
+    /// the global hotkey; flipping it posts a notification so the manager
+    /// can re-install with the new behaviour mid-session.
+    @Published var activationMode: ActivationMode {
+        didSet {
+            guard activationMode != oldValue else { return }
+            UserDefaults.standard.set(activationMode.rawValue, forKey: Key.activationMode)
+            NotificationCenter.default.post(name: .activationModeDidChange, object: self)
+        }
+    }
+
+    /// Suppress the hotkey when a text-entry field already has focus and the
+    /// user is actively typing. Prevents accidental triggers while writing
+    /// code or filling forms. Default ON — read by `HotkeyManager` before
+    /// invoking onPress; doesn't change the hotkey registration itself.
+    @Published var inhibitWhileTyping: Bool {
+        didSet {
+            guard inhibitWhileTyping != oldValue else { return }
+            UserDefaults.standard.set(inhibitWhileTyping, forKey: Key.inhibitWhileTyping)
+        }
+    }
+
     private init() {
         let defaults = UserDefaults.standard
         let storedModel = defaults.string(forKey: Key.activeModelID)
         let storedDidRun = defaults.bool(forKey: Key.didCompleteFirstRun)
         let storedHex = defaults.string(forKey: Key.accentHex)
+        let storedLang = defaults.string(forKey: Key.selectedLanguageCode)
 
         if let storedModel, ModelCatalog.model(id: storedModel) != nil {
             self.activeModelID = storedModel
@@ -69,9 +221,53 @@ final class PreferencesStore: ObservableObject {
             defaults.set(recommended.id, forKey: Key.activeModelID)
         }
 
+        // Language preference: validate against our curated list. An unknown
+        // code (corrupted defaults, value removed from a future catalog) falls
+        // back to "auto" rather than crashing or silently using something
+        // unexpected. First-launch users get "auto" so they're not forced
+        // into English even on a multilingual model.
+        if let storedLang, TranscriptionLanguageCatalog.isValid(storedLang) {
+            self.selectedLanguageCode = storedLang
+        } else {
+            self.selectedLanguageCode = TranscriptionLanguageMode.autoCode
+            defaults.set(TranscriptionLanguageMode.autoCode,
+                         forKey: Key.selectedLanguageCode)
+        }
+
         // Accent is always present (defaulted) so the app paints sensibly on a
         // fresh install before the user has visited the picker.
         self.accentHex = storedHex ?? Self.defaultAccentHex
+
+        // Polish defaults: off, prompt at baseline. The customPrompt slot is
+        // pre-seeded with the default so the textarea has something sensible
+        // to show the moment the user clicks "Customise prompt" — they edit
+        // a copy, they don't start from a blank field.
+        self.polishEnabled = defaults.bool(forKey: Key.polishEnabled)
+        self.polishPromptIsCustomised = defaults.bool(forKey: Key.polishPromptIsCustomised)
+        self.polishCustomPrompt = defaults.string(forKey: Key.polishCustomPrompt)
+            ?? CleanupPrompt.defaultPrompt
+
+        // General-tab defaults:
+        //   • Launch at login OFF — opt-in (we don't auto-add ourselves on
+        //     first launch; the user has to ask).
+        //   • Hide menu bar OFF — icon visible by default so people can
+        //     find Settings without keyboard navigation.
+        //   • Activation mode push-to-talk — matches the v1 spec.
+        //   • Inhibit while typing ON — safest default for daily use.
+        self.launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
+        self.hideMenuBarIcon = defaults.bool(forKey: Key.hideMenuBarIcon)
+        if let modeRaw = defaults.string(forKey: Key.activationMode),
+           let mode = ActivationMode(rawValue: modeRaw) {
+            self.activationMode = mode
+        } else {
+            self.activationMode = .pushToTalk
+        }
+        if defaults.object(forKey: Key.inhibitWhileTyping) == nil {
+            self.inhibitWhileTyping = true
+            defaults.set(true, forKey: Key.inhibitWhileTyping)
+        } else {
+            self.inhibitWhileTyping = defaults.bool(forKey: Key.inhibitWhileTyping)
+        }
     }
 
     /// Mark first-run as done; called once the user has accepted (or changed
@@ -94,6 +290,56 @@ final class PreferencesStore: ObservableObject {
     /// Restore the brand violet.
     func resetAccent() {
         accentHex = Self.defaultAccentHex
+    }
+
+    // MARK: - Language derived helpers
+
+    /// What we actually pass to the engine. If the active model is
+    /// English-only (a `.en` variant), force `"en"` regardless of what's
+    /// in `selectedLanguageCode` — those models can't decode anything else
+    /// and passing `"auto"` or another locale would either error or
+    /// silently produce nonsense. Otherwise pass through the user's pick.
+    var effectiveLanguageCode: String {
+        if let model = ModelCatalog.model(id: activeModelID), !model.isMultilingual {
+            return "en"
+        }
+        return selectedLanguageCode
+    }
+
+    /// True when the active model variant is multilingual — i.e. the
+    /// language picker should be enabled in Settings. Single source of
+    /// truth so the UI logic stays one-line.
+    var activeModelSupportsLanguageChoice: Bool {
+        ModelCatalog.model(id: activeModelID)?.isMultilingual ?? false
+    }
+
+    // MARK: - Polish derived helpers
+
+    /// The cleanup prompt that will actually be sent to the language model.
+    /// Customised → user's edit. Default → the canonical prompt from
+    /// `CleanupPrompt`. Computed (not stored) so it always reflects the
+    /// current customise toggle without needing a separate didSet sync.
+    var effectivePolishPrompt: String {
+        polishPromptIsCustomised ? polishCustomPrompt : CleanupPrompt.defaultPrompt
+    }
+
+    /// User clicks "Customise prompt": flip into customised mode. Seeds the
+    /// editable text with whatever they were just looking at (the default)
+    /// so they can edit-in-place rather than starting from blank.
+    func enablePolishCustomPrompt() {
+        if !polishPromptIsCustomised {
+            polishCustomPrompt = CleanupPrompt.defaultPrompt
+            polishPromptIsCustomised = true
+        }
+    }
+
+    /// User clicks "Reset to default": flip out of customised mode. We DON'T
+    /// wipe `polishCustomPrompt` — keeping the previous edits means clicking
+    /// Customise again restores the user's last version rather than the
+    /// pristine default. (If they want to start over, the editable textarea
+    /// has a "Restore default text" affordance.)
+    func resetPolishPrompt() {
+        polishPromptIsCustomised = false
     }
 }
 
@@ -141,4 +387,27 @@ extension PreferencesStore {
             endPoint: .bottomTrailing
         )
     }
+}
+
+extension Notification.Name {
+    /// Posted by `PreferencesStore` whenever the user picks a different
+    /// Whisper model. Listeners (e.g. `PillWindowController`) use this to
+    /// reset session-scoped state that should re-trigger after a model
+    /// switch — like replaying the cinematic spawn animation on the next
+    /// hotkey press.
+    static let activeModelDidChange = Notification.Name("CyphrWhispr.activeModelDidChange")
+
+    /// Posted when the user flips the Launch-at-login switch. The launch-
+    /// services helper observes this to register / unregister the
+    /// `SMAppService.mainApp` entry.
+    static let launchAtLoginDidChange = Notification.Name("CyphrWhispr.launchAtLoginDidChange")
+
+    /// Posted when the user flips the Hide-menu-bar-icon switch.
+    /// `StatusItemController` observes this and installs / removes the
+    /// `NSStatusItem` so the change takes effect immediately.
+    static let hideMenuBarIconDidChange = Notification.Name("CyphrWhispr.hideMenuBarIconDidChange")
+
+    /// Posted when the user changes the activation mode (push-to-talk vs
+    /// toggle). `HotkeyManager` observes this and re-wires its callbacks.
+    static let activationModeDidChange = Notification.Name("CyphrWhispr.activationModeDidChange")
 }

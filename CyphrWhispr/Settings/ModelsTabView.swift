@@ -1,12 +1,16 @@
 import SwiftUI
 import AppKit
 
-/// Settings → Models tab, restyled to match the dark glass design (Page 2 of
-/// the Settings spec). Same data model as before — `ModelInventory` combines
-/// the curated `ModelCatalog` with whatever is on disk in the models folder
-/// (downloads + custom imports). Selecting a row flips
-/// `PreferencesStore.activeModelID`, which the AppCoordinator observes and
-/// hot-reloads in the background.
+/// Settings → Models tab — restyled to match the high-fidelity mockup. Each
+/// model row is a chunky entry with name + bracketed status badge + metadata
+/// line + a native-style `[Switch]` / `[In use]` / `[Download]` action
+/// button on the right. The currently-active row gets a soft accent wash to
+/// match the rest of the design language.
+///
+/// Data layer is unchanged — `ModelInventory` still combines the curated
+/// `ModelCatalog` with whatever is on disk in the models folder. The
+/// language picker that used to live at the top of this tab has moved to
+/// General (it's a daily-driver preference, not a model property).
 struct ModelsTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
     @StateObject private var manager = ModelInventory()
@@ -14,176 +18,82 @@ struct ModelsTabView: View {
     private let profile = HardwareProfiler.profile()
 
     var body: some View {
-        VStack(spacing: 14) {
-            recommendationBanner
-
-            SettingsCard(padding: 0) {
+        SettingsTabContainer(
+            title: "Models",
+            subtitle: "Apple-Silicon-accelerated Whisper variants. We picked one that fits your Mac on first launch — switch any time."
+        ) {
+            SettingsCard {
                 VStack(spacing: 0) {
-                    // Header row inside the card.
-                    HStack {
-                        Text("Available models")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(SettingsDesign.textPrimary)
-                        Spacer()
-                        Button("Import custom…") { manager.importCustomModel() }
-                            .buttonStyle(GhostButtonStyle())
-                            .help("Import a Core ML Whisper model folder (.mlmodelc bundles)")
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 16)
-                    .padding(.bottom, 10)
-
-                    Divider().overlay(SettingsDesign.cardStroke)
-
-                    // Scrollable list.
-                    ScrollView {
-                        LazyVStack(spacing: 4) {
-                            ForEach(manager.rows) { row in
-                                ModelRowView(
-                                    row: row,
-                                    isActive: prefs.activeModelID == row.id,
-                                    onSelect: { prefs.activeModelID = row.id },
-                                    onDelete: { manager.delete(row) }
-                                )
-                                .environmentObject(prefs)
-                            }
+                    ForEach(Array(manager.rows.enumerated()), id: \.element.id) { index, row in
+                        ModelRowView(
+                            row: row,
+                            recommendedID: ModelRecommender.recommend(for: profile).id,
+                            isActive: prefs.activeModelID == row.id,
+                            onSelect: { prefs.activeModelID = row.id },
+                            onDelete: { manager.delete(row) }
+                        )
+                        .environmentObject(prefs)
+                        if index < manager.rows.count - 1 {
+                            CardRowDivider()
                         }
-                        .padding(.vertical, 6)
                     }
                 }
             }
 
-            // Footer card with storage path + reveal button.
-            HStack(spacing: 10) {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 11))
+            // Footer: import button + storage path (read-only). Path
+            // collapses `$HOME` to `~` to keep the line scannable.
+            HStack(spacing: 14) {
+                Button("[Import custom model…]") { manager.importCustomModel() }
+                    .buttonStyle(NativeMacButtonStyle())
+                    .accessibilityLabel("Import custom model")
+                Spacer()
+                Text(AppSupportPaths.modelsRoot.path.replacingOccurrences(
+                    of: NSHomeDirectory(), with: "~"))
+                    .font(SettingsDesign.krCaption(size: 11))
                     .foregroundStyle(SettingsDesign.textTertiary)
-                Text("Models stored at \(AppSupportPaths.modelsRoot.path)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(SettingsDesign.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer()
-                Button("Reveal in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([AppSupportPaths.modelsRoot])
-                }
-                .buttonStyle(GhostButtonStyle())
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.03))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(SettingsDesign.cardStroke, lineWidth: 1)
-                    )
-            )
+            .padding(.top, 2)
         }
         .onAppear { manager.refresh() }
     }
-
-    // MARK: - Banner
-
-    private var recommendationBanner: some View {
-        let recommended = ModelRecommender.recommend(for: profile)
-        return HStack(spacing: 12) {
-            // Accent bolt badge.
-            Circle()
-                .fill(prefs.accentWash)
-                .overlay(
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(prefs.accent)
-                )
-                .frame(width: 26, height: 26)
-
-            Text(ModelRecommender.explanation(for: profile, model: recommended))
-                .font(.system(size: 12.5))
-                .foregroundStyle(SettingsDesign.textSecondary)
-
-            Spacer()
-
-            if prefs.activeModelID != recommended.id {
-                Button("Switch") {
-                    prefs.activeModelID = recommended.id
-                }
-                .buttonStyle(GhostButtonStyle())
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(prefs.accentWash)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(prefs.accent.opacity(0.30), lineWidth: 1)
-                )
-        )
-    }
 }
 
-// MARK: - Row
+// MARK: - Model row
 
 private struct ModelRowView: View {
     let row: ModelInventory.Row
+    /// ID of the model the recommender picked for this hardware. Highlighting
+    /// it as "Recommended" inside the row matches the mockup, which folds the
+    /// hardware-recommendation banner into the row itself.
+    let recommendedID: String
     let isActive: Bool
     let onSelect: () -> Void
     let onDelete: () -> Void
 
     @EnvironmentObject private var prefs: PreferencesStore
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            // Custom radio: hollow ring with accent fill when selected.
-            ZStack {
-                Circle()
-                    .strokeBorder(isActive ? prefs.accent : Color.white.opacity(0.30),
-                                  lineWidth: 1.6)
-                    .frame(width: 18, height: 18)
-                if isActive {
-                    Circle()
-                        .fill(prefs.accent)
-                        .frame(width: 9, height: 9)
-                }
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                titleLine
+                metadataLine
             }
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(row.displayName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(isActive ? prefs.accent : SettingsDesign.textPrimary)
-                    if row.isCustom {
-                        Text("CUSTOM")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(SettingsDesign.textSecondary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule().fill(Color.white.opacity(0.10))
-                            )
-                    }
-                }
-                Text(row.subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(SettingsDesign.textSecondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            statusBadge
+            Spacer(minLength: 14)
+            actionButton
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, SettingsDesign.rowPaddingHorizontal)
+        .padding(.vertical, SettingsDesign.rowPaddingVertical)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isActive ? prefs.accentWash : Color.clear)
+            isActive
+                ? prefs.accent.opacity(0.10)
+                : (isHovered ? Color.white.opacity(0.02) : Color.clear)
         )
-        .padding(.horizontal, 8)
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
+        .onHover { hovering in isHovered = hovering }
         .contextMenu {
             if row.isDownloaded && !isActive {
                 Button("Remove download", role: .destructive, action: onDelete)
@@ -191,35 +101,107 @@ private struct ModelRowView: View {
         }
     }
 
-    @ViewBuilder
-    private var statusBadge: some View {
-        if row.isDownloaded {
-            Text(formatBytes(row.diskBytes))
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(isActive ? prefs.accent : SettingsDesign.textSecondary)
-        } else {
-            Text("Not downloaded")
-                .font(.system(size: 11))
-                .foregroundStyle(SettingsDesign.textTertiary)
+    /// Row title — model display name + bracketed status badge. Two badge
+    /// variants: `[ ▪ ACTIVE ]` (accent) for the currently-selected model,
+    /// or the download status badge (downloaded / not installed) otherwise.
+    /// Baseline-aligned so badges sit visually centred with the text.
+    private var titleLine: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(row.displayName)
+                .font(SettingsDesign.krBody(size: 14.5, weight: .semibold))
+                .foregroundStyle(SettingsDesign.textPrimary)
+
+            if isActive {
+                TerminalBadge(label: "ACTIVE", glyph: "▪", tint: prefs.accent)
+            } else if row.isDownloaded {
+                TerminalBadge(label: "DOWNLOADED",
+                              glyph: "↓",
+                              tint: SettingsDesign.badgeSuccess)
+            } else {
+                TerminalBadge(label: "NOT INSTALLED",
+                              glyph: "□",
+                              tint: SettingsDesign.badgeDanger)
+            }
+
+            if row.isCustom {
+                TerminalBadge(label: "CUSTOM", glyph: nil, tint: SettingsDesign.badgeBlue)
+            }
         }
     }
 
-    private func formatBytes(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    /// One-line metadata: disk size · realtime estimate · "recommended"
+    /// / "english only" / "bundled fallback" suffix.
+    private var metadataLine: some View {
+        Text(metadataText)
+            .font(SettingsDesign.krCaption(size: 12))
+            .foregroundStyle(SettingsDesign.textSecondary)
+            .lineLimit(1)
+    }
+
+    private var metadataText: String {
+        var parts: [String] = []
+        let sizeLabel = ByteCountFormatter.string(
+            fromByteCount: row.diskBytes > 0 ? row.diskBytes : Int64(row.approxSizeMB) * 1_048_576,
+            countStyle: .file
+        )
+        parts.append(sizeLabel)
+        if let speed = row.speedHint, !speed.isEmpty {
+            parts.append(speed)
+        }
+        if row.id == recommendedID {
+            parts.append("Recommended for this Mac")
+        } else if Self.bundledFallbackIDs.contains(row.id) {
+            parts.append("Bundled fallback")
+        } else if !row.isMultilingual {
+            parts.append("English-only")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Hard-coded — these are the small `.en` variants we ship in the .app
+    /// bundle so the app works offline immediately on first launch. Used
+    /// only to label the metadata line; the actual loading logic lives in
+    /// `WhisperKitBackend`.
+    private static let bundledFallbackIDs: Set<String> = [
+        "openai_whisper-small.en",
+    ]
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if isActive {
+            Button("[In use]") {}
+                .buttonStyle(NativeMacButtonStyle())
+                .disabled(true)
+                .accessibilityLabel("Currently in use")
+        } else if row.isDownloaded {
+            Button("[Switch]") { onSelect() }
+                .buttonStyle(NativeMacButtonStyle())
+                .accessibilityLabel("Switch to this model")
+        } else {
+            Button("[Download]") { onSelect() }
+                .buttonStyle(NativeMacButtonStyle())
+                .accessibilityLabel("Download this model")
+        }
     }
 }
 
-// MARK: - Inventory (unchanged data layer)
+// MARK: - Inventory
 
 /// Combines `ModelCatalog` (curated download options) with a scan of the
 /// on-disk models folder (downloaded + user-imported custom models). Drives
-/// the Models tab UI.
+/// the Models tab UI. Same as before — the refactor is purely cosmetic.
 @MainActor
 final class ModelInventory: ObservableObject {
     struct Row: Identifiable, Hashable {
         let id: String
         let displayName: String
-        let subtitle: String
+        /// Approximate size in MB from the catalog (used when the model
+        /// isn't yet downloaded so we can still show a size hint).
+        let approxSizeMB: Int
+        /// One-line speed description (e.g. "~1.5× realtime"). Empty for
+        /// custom-imported models which have no catalog entry.
+        let speedHint: String?
+        let isMultilingual: Bool
         let isCustom: Bool
         let isDownloaded: Bool
         let diskBytes: Int64
@@ -236,7 +218,9 @@ final class ModelInventory: ObservableObject {
             return Row(
                 id: model.id,
                 displayName: model.displayName,
-                subtitle: subtitle(for: model),
+                approxSizeMB: model.approxSizeMB,
+                speedHint: model.speedHint,
+                isMultilingual: model.isMultilingual,
                 isCustom: false,
                 isDownloaded: downloaded,
                 diskBytes: downloaded ? AppSupportPaths.diskSize(of: model.id) : 0
@@ -250,7 +234,9 @@ final class ModelInventory: ObservableObject {
                 Row(
                     id: id,
                     displayName: id,
-                    subtitle: "Custom Core ML model",
+                    approxSizeMB: 0,
+                    speedHint: nil,
+                    isMultilingual: true,
                     isCustom: true,
                     isDownloaded: true,
                     diskBytes: AppSupportPaths.diskSize(of: id)
@@ -268,15 +254,6 @@ final class ModelInventory: ObservableObject {
         return Set(names.filter { name in
             AppSupportPaths.isModelDownloaded(name)
         })
-    }
-
-    private func subtitle(for model: WhisperModel) -> String {
-        let language = model.isMultilingual ? "Multilingual" : "English-only"
-        let approxSize = ByteCountFormatter.string(
-            fromByteCount: Int64(model.approxSizeMB) * 1_048_576,
-            countStyle: .file
-        )
-        return "\(language) · \(approxSize) · \(model.speedHint)"
     }
 
     // MARK: - Custom import

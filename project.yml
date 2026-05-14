@@ -44,6 +44,12 @@ targets:
           - "**/*.md"
     resources:
       - path: CyphrWhispr/Resources/Assets.xcassets
+      # Bundled fonts. The four .otf files get copied to Resources/Fonts/
+      # in the built app bundle; ATSApplicationFontsPath in Info.plist
+      # points at that subdirectory so macOS registers them at launch.
+      # SIL OFL — see Resources/Fonts/LICENSE.txt for the license bundled
+      # with the binary alongside the fonts themselves.
+      - path: CyphrWhispr/Resources/Fonts
     dependencies:
       - package: KeyboardShortcuts
       - package: WhisperKit
@@ -62,6 +68,21 @@ targets:
         LSUIElement: true
         NSMicrophoneUsageDescription: "CyphrWhispr listens to your microphone only when you hold or toggle the dictation hotkey, transcribes locally on your Mac, and never sends audio anywhere."
         NSHumanReadableCopyright: ""
+        # Tells AppKit to register every font file inside the bundle's
+        # Resources/ directory at launch — used to ship Monaspace Krypton
+        # (the Settings UI font) without per-user installation. We use "."
+        # rather than "Fonts/" because Xcode resource refs in this project
+        # land flat in Contents/Resources/ regardless of source layout.
+        ATSApplicationFontsPath: "."
+        # Custom URL scheme `cyphr-whispr://`. Used as a lightweight remote
+        # for the running app — `open cyphr-whispr://open-settings` opens
+        # the Settings window without the user clicking the menu bar icon.
+        # Primarily for developer / scripting workflows (UI screenshots,
+        # automation); also makes future deep-linking trivial.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.cyphr.whispr
+            CFBundleURLSchemes:
+              - cyphr-whispr
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: CyphrWhispr/Resources/CyphrWhispr.entitlements
@@ -95,3 +116,9 @@ targets:
       - CyphrWhisprTests
     dependencies:
       - target: CyphrWhispr
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.cyphr.whispr.tests
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/CyphrWhispr.app/Contents/MacOS/CyphrWhispr"

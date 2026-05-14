@@ -5,8 +5,40 @@ final class StatusItemController {
     var onQuit: (() -> Void)?
 
     private var statusItem: NSStatusItem?
+    private var hideObserver: NSObjectProtocol?
+
+    /// Cached "last app state" so we can re-apply it after the menu-bar
+    /// icon is hidden and then shown again. Without this, re-installing
+    /// would put us back to `.idle` even if the user was mid-dictation
+    /// when they flipped the toggle.
+    private var lastState: AppState = .idle
 
     func install() {
+        installStatusItem()
+
+        // Hot-toggle support — observe the "hide menu bar icon" pref so the
+        // user sees the icon disappear / reappear without quitting the app.
+        if hideObserver == nil {
+            hideObserver = NotificationCenter.default.addObserver(
+                forName: .hideMenuBarIconDidChange,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.applyHidePref()
+                }
+            }
+        }
+        // Reflect the current pref state immediately on first install.
+        applyHidePref()
+    }
+
+    /// Add the status item to the menu bar if we don't already have one,
+    /// honouring the "hide menu bar icon" pref.
+    private func installStatusItem() {
+        guard statusItem == nil else { return }
+        if PreferencesStore.shared.hideMenuBarIcon { return }
+
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
             button.image = makeLogoIcon()
@@ -14,6 +46,9 @@ final class StatusItemController {
         }
         item.menu = buildMenu()
         statusItem = item
+        // Re-apply the last known state so tooltip/icon match what the
+        // coordinator was last broadcasting.
+        update(for: lastState)
     }
 
     func remove() {
@@ -21,15 +56,37 @@ final class StatusItemController {
             NSStatusBar.system.removeStatusItem(item)
         }
         statusItem = nil
+        if let token = hideObserver {
+            NotificationCenter.default.removeObserver(token)
+            hideObserver = nil
+        }
+    }
+
+    /// Reconcile the visible status item with the user's "hide menu bar
+    /// icon" preference. Called once on install and again whenever the
+    /// pref flips.
+    private func applyHidePref() {
+        let shouldHide = PreferencesStore.shared.hideMenuBarIcon
+        if shouldHide {
+            if let item = statusItem {
+                NSStatusBar.system.removeStatusItem(item)
+                statusItem = nil
+            }
+        } else {
+            installStatusItem()
+        }
     }
 
     func update(for state: AppState) {
+        // Remember the latest broadcast even if the icon is currently
+        // hidden — we'll re-apply it next time it comes back.
+        lastState = state
         guard let button = statusItem?.button else { return }
         switch state {
         case .idle, .loadingModel:
             button.image = makeLogoIcon()
             button.toolTip = "CyphrWhispr"
-        case .armed, .streaming, .finalizing, .injecting:
+        case .spawning, .armed, .streaming, .finalizing, .injecting:
             // Same filled logo, just a tooltip change. The pill window itself
             // is the primary "I'm recording" signal — duplicating that in the
             // menu bar with a different glyph would just be visual noise.

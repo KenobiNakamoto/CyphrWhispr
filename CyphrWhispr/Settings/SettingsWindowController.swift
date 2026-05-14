@@ -29,20 +29,28 @@ final class SettingsWindowController {
                 .environmentObject(PreferencesStore.shared)
         )
         let window = NSWindow(contentViewController: host)
-        window.title = "CyphrWhispr Settings"
+        window.title = "CyphrWhispr — Settings"
         // .resizable lets the user drag the window edges; .fullSizeContentView
-        // lets the SwiftUI gradient extend up behind the transparent titlebar.
+        // lets the SwiftUI content extend up under the transparent titlebar.
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.isReleasedWhenClosed = false
-        // Dark, transparent titlebar so the SwiftUI gradient bleeds up behind
-        // the traffic lights — matches the design screenshots.
+        // Hide the system title — SettingsView draws its own centred title
+        // strip inside the content area so the title centres exactly above
+        // the sidebar / content split (macOS won't centre titles in
+        // `.fullSizeContentView` windows; it left-aligns them next to the
+        // traffic lights).
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = .visible
+        window.titleVisibility = .hidden
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(SettingsDesign.bgDeepest)
+        window.backgroundColor = NSColor(SettingsDesign.pageBackground)
         window.isMovableByWindowBackground = true
-        // Hard floor on size so the layout doesn't break at silly small widths.
-        window.minSize = NSSize(width: 460, height: 540)
+        // Hard floor on size — the sidebar (260pt) + content panel needs at
+        // least 880pt wide before rows start to feel cramped.
+        window.minSize = NSSize(width: 880, height: 600)
+        // Ideal first-launch size if no autosave entry exists yet. The
+        // sidebar refactor needs more horizontal room than the old segmented
+        // tab layout did.
+        window.setContentSize(NSSize(width: 960, height: 720))
         window.center()
         // Autosaves position AND size between launches — the user's preferred
         // window dimensions stick even after a quit/relaunch.

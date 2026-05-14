@@ -1,391 +1,650 @@
-<h2>First-install animation — v4 (synced push + outro preview)</h2>
-<p class="subtitle">Circle now stays glued to the right edge throughout the push — they move at the same velocity, so it really looks like the circle is shoving the wall open. Geometry: triangle at constant 24px left padding (pushing the left wall out), circle at constant <code>pill_width − 58</code> (pushing the right wall out with 24px padding). After the rim completes its sweep, the outro plays — circle traverses leftward, bars cascade in, comet ignites — same end-of-v5 choreography you approved.</p>
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>CyphrWhispr — First-Install Pill Animation</title>
 <style>
-  .stage {
-    background: linear-gradient(180deg, #1a1a22 0%, #0a0a0d 100%);
-    border-radius: 16px;
-    height: 320px;
+  /* ============================================================
+     CyphrWhispr First-Install Pill Animation
+     Mockup: 2× production scale.
+     Production pill: 170 × 48, radius 24
+     Mockup pill:     340 × 96, radius 48
+     Total loop:      ~11s (intro + 8s rim sweep + outro)
+     ============================================================ */
+
+  :root {
+    --accent: #7C4DFF;
+    --accent-2: #5B6FFF;
+    --bg: #0D0D12;
+
+    /* All measurements in MOCKUP units (2× production). */
+    --pill-h: 96px;
+    --pill-r: 48px;
+    --pill-w-final: 340px;
+    --pill-w-seed: 126px;
+    --pill-w-anti: 120px;
+
+    /* Inner figure positions (idle / final state) */
+    --tri-x-final: 44px;       /* 22pt × 2 */
+    --circle-x-final: 94px;    /* 47pt × 2 */
+
+    /* Spawn (seed) figure positions, pinned 12pt inside seed walls */
+    --tri-x-seed: 24px;        /* 12pt × 2 */
+    --circle-x-seed: 68px;     /* (63 - 12 - 17) × 2 */
+
+    /* Push end positions */
+    --tri-x-push: 24px;        /* still pinned 12pt from left wall — left wall is at 0 of pill, tri at +12pt = +24px */
+    --circle-x-push: 282px;    /* (170 - 29) × 2 = 141 × 2 */
+
+    --easeMain: cubic-bezier(0.16, 0.84, 0.30, 1);
+    --easeBar: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #07070a;
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #fff;
+    overflow: hidden;
+  }
+
+  body {
     display: flex;
     align-items: center;
     justify-content: center;
-    position: relative;
-    overflow: visible;
-  }
-  .replay-btn {
-    position: absolute;
-    bottom: 14px;
-    right: 14px;
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.14);
-    color: rgba(255,255,255,0.9);
-    padding: 7px 14px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    z-index: 20;
-  }
-  .replay-btn:hover { background: rgba(255,255,255,0.14); }
-  .timing-readout {
-    position: absolute;
-    top: 14px;
-    left: 14px;
-    color: rgba(255,255,255,0.45);
-    font-size: 11px;
-    font-family: ui-monospace, monospace;
-    z-index: 5;
-  }
-  /* For the mockup we accelerate the rim to 8s instead of 45s so you can
-     actually watch the full sequence without waiting almost a minute. The
-     spec calls for 45s default with real progress mapping when WhisperKit
-     gives us a callback. */
-  .mockup-note {
-    position: absolute;
-    top: 14px;
-    right: 14px;
-    color: rgba(255,255,255,0.55);
-    font-size: 10px;
-    font-family: ui-monospace, monospace;
-    background: rgba(124,77,255,0.10);
-    border: 1px solid rgba(124,77,255,0.30);
-    padding: 4px 8px;
-    border-radius: 4px;
-    z-index: 5;
-    text-align: right;
-    line-height: 1.4;
   }
 
-  .pill-wrapper {
+  .stage {
     position: relative;
-    width: 340px;
-    height: 96px;
-  }
-
-  /* Pill — same as v3 but with the corrected push geometry so the right
-     edge moves in lockstep with the circle. Seed is 126pt wide (triangle
-     and circle both already at their respective walls, side-by-side with
-     an 8pt gap between them). */
-  .pill {
-    position: absolute;
-    inset: 0;
-    background: #000;
-    border-radius: 48px;
-    box-shadow: 0 16px 40px rgba(0,0,0,0.7);
+    width: 1040px;   /* 520 × 2 */
+    height: 400px;   /* 200 × 2 */
+    background: var(--bg);
+    border-radius: 12px;
     overflow: hidden;
-    width: 126px;
-    left: calc(50% - 63px);
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+  }
 
+  .caption {
+    position: absolute;
+    top: 18px;
+    left: 24px;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.35);
+    font-weight: 500;
+  }
+
+  .replay {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.7);
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .replay:hover { background: rgba(255,255,255,0.10); color: #fff; }
+
+  /* ----- Pill container ----- */
+  /* The pill anchor is centred horizontally; the pill grows symmetrically
+     because we anchor at center and animate width on a centered element. */
+  .pill-anchor {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    /* Slight downward bias for the spawn-room above */
+    margin-top: 28px;
+  }
+
+  /* The actual pill: width & filter animate. We use translateX(-50%) on
+     itself so width changes are symmetric around center. */
+  .pill {
+    position: relative;
+    width: var(--pill-w-seed);
+    height: var(--pill-h);
+    border-radius: var(--pill-r);
+    background: #000;
+    transform-origin: 50% 50%;
+    /* Drop shadow: 16pt blur y=8 black 50% + 3pt blur y=1 black 20% */
+    filter:
+      drop-shadow(0 16px 32px rgba(0,0,0,0.50))
+      drop-shadow(0 2px 6px rgba(0,0,0,0.20));
+
+    opacity: 0;
     animation:
-      pillExpand 11s cubic-bezier(0.16, 0.84, 0.30, 1) forwards,
-      pillBreathe 11s ease-in-out forwards;
-  }
-  /* Total mockup timeline: 2.5s intro + 8s rim sweep + 0.5s outro = 11s.
-     The pill width animation only changes during the intro (0 → 22.7%) and
-     during the outro (it stays 340 for the rim phase). */
-  @keyframes pillExpand {
-    0%    { width: 126px; left: calc(50% - 63px); }
-    5.5%  { width: 126px; left: calc(50% - 63px); }   /* spawn complete (0.6s) */
-    7.7%  { width: 120px; left: calc(50% - 60px); }   /* anticipation end (0.85s) */
-    15.5% { width: 340px; left: calc(50% - 170px); }  /* push complete (1.7s) */
-    100%  { width: 340px; left: calc(50% - 170px); }
-  }
-  @keyframes pillBreathe {
-    0%, 5.5% { transform: scale(1); }
-    15.5%    { transform: scale(1.02); }
-    22.7%    { transform: scale(1); }
-    100%     { transform: scale(1); }
+      pillWidth 11s linear infinite,
+      pillBreathe 11s linear infinite,
+      pillFadeIn 11s linear infinite;
+    will-change: width, transform, opacity;
   }
 
-  .figure {
+  /* Width keyframes, in absolute mockup px values.
+     Timeline (out of 11s = 100%):
+       0.00s   0.00%   width = seed (126)
+       0.60s   5.45%   width = seed
+       0.85s   7.73%   width = anti (120)
+       1.70s  15.45%   width = final (340)
+       1.50s  13.64%   breathe peak (1.02× via separate transform anim)
+       remains 340 through end
+  */
+  @keyframes pillWidth {
+    0%      { width: 126px; }
+    5.45%   { width: 126px; }   /* end of spawn fade-in */
+    7.73%   { width: 120px; }   /* anticipation low */
+    15.45%  { width: 340px; }   /* push complete */
+    100%    { width: 340px; }
+  }
+
+  /* Breathe = 1.02× scale at apex of push (~t=1.5s = 13.64%) */
+  @keyframes pillBreathe {
+    0%, 11.36% { transform: scale(1); }
+    13.64%     { transform: scale(1.02); }
+    16.36%     { transform: scale(1); }
+    100%       { transform: scale(1); }
+  }
+
+  @keyframes pillFadeIn {
+    0%     { opacity: 0; }
+    5.45%  { opacity: 1; }     /* fully in by 0.6s */
+    100%   { opacity: 1; }
+  }
+
+  /* ----- Triangle (down-pointing) ----- */
+  /* Pinned to the left wall: its position is always 24px (= 12pt) from pill's
+     left edge. Because the pill is centered and grows symmetrically, in stage
+     coordinates the triangle slides leftward as the pill expands. We achieve
+     this by positioning the triangle relative to the pill (left:24px), which
+     stays constant; the pill's leftward growth carries the triangle with it. */
+  .triangle {
+    position: absolute;
+    left: 24px;
+    top: 50%;
+    width: 36px;     /* 18pt × 2 */
+    height: 32px;    /* 16pt × 2 */
+    transform: translateY(-50%) scale(0.5);
+    opacity: 0;
+    animation: triSpawn 11s linear infinite;
+    will-change: transform, opacity;
+  }
+  .triangle svg { display: block; width: 100%; height: 100%; }
+
+  @keyframes triSpawn {
+    0%     { opacity: 0; transform: translateY(-50%) scale(0.5); }
+    5.45%  { opacity: 1; transform: translateY(-50%) scale(1.0); }   /* 0.6s */
+    7.73%  { opacity: 1; transform: translateY(-50%) scale(0.97); }  /* anticipation */
+    15.45% { opacity: 1; transform: translateY(-50%) scale(1.0); }   /* push end */
+    100%   { opacity: 1; transform: translateY(-50%) scale(1.0); }
+  }
+
+  /* ----- Circle ----- */
+  /* The circle is pinned to the RIGHT wall of the pill via right:24px during
+     spawn/anticipation/push. After the push, during the outro, it traverses
+     LEFTWARD from x=141 (production) → x=47 (production) [mockup 282 → 94].
+     We can't mix `right` and `left` in the same animation cleanly, so we
+     position with `left` and animate `left` directly. */
+  .circle {
     position: absolute;
     top: 50%;
-    background: white;
-    z-index: 3;
-    opacity: 0;
-  }
-
-  /* Triangle — sits at constant 24pt left padding throughout the entire
-     animation (during push: left wall moves leftward in stage coords, and
-     so does the triangle, which is glued to it). */
-  .triangle {
-    width: 36px;
-    height: 32px;
-    clip-path: polygon(0 0, 100% 0, 50% 100%);
-    left: 24px;
-    transform: translateY(-50%) scale(0.5);
-    animation: triSpawnAndPush 11s cubic-bezier(0.16, 0.84, 0.30, 1) forwards;
-  }
-
-  /* Circle — relative left = pill_width - 58 throughout (constant 24pt right
-     padding from the wall). At pill_width=126 → left=68 (spawn). At
-     pill_width=120 → left=62 (anticipation). At pill_width=340 → left=282
-     (push end). And then during the outro, traverses leftward to left=92
-     (next-to-triangle position). */
-  .dot {
-    width: 34px;
-    height: 34px;
+    width: 34px;     /* 17pt × 2 */
+    height: 34px;    /* 17pt × 2 */
+    background: #fff;
     border-radius: 50%;
-    left: 68px;
     transform: translateY(-50%) scale(0.5);
-    animation: dotSpawnPushAndOutro 11s cubic-bezier(0.16, 0.84, 0.30, 1) forwards;
-    animation-delay: 60ms;
-  }
-  @keyframes triSpawnAndPush {
-    0%    { opacity: 0; left: 24px; transform: translateY(-50%) scale(0.5); }
-    5.5%  { opacity: 1; left: 24px; transform: translateY(-50%) scale(1); }
-    7.7%  { opacity: 1; left: 24px; transform: translateY(-50%) scale(0.97); }
-    15.5% { opacity: 1; left: 24px; transform: translateY(-50%) scale(1); }
-    100%  { opacity: 1; left: 24px; transform: translateY(-50%) scale(1); }
-  }
-  @keyframes dotSpawnPushAndOutro {
-    /* Spawn (0 → 5.5%): fade in + scale up at right side of seed */
-    0%    { opacity: 0; left: 68px; transform: translateY(-50%) scale(0.5); }
-    5.5%  { opacity: 1; left: 68px; transform: translateY(-50%) scale(1); }
-    /* Anticipation (5.5 → 7.7%): tracks the pill compressing to 120 */
-    7.7%  { opacity: 1; left: 62px; transform: translateY(-50%) scale(0.97); }
-    /* Push (7.7 → 15.5%): tracks the right wall expanding to 340 */
-    15.5% { opacity: 1; left: 282px; transform: translateY(-50%) scale(1); }
-    /* Hold (15.5 → 22.7%): circle holds at far right while text + rim appear */
-    22.7% { opacity: 1; left: 282px; transform: translateY(-50%) scale(1); }
-    /* Rim sweep phase (22.7 → 95%): circle stays put */
-    95%   { opacity: 1; left: 282px; transform: translateY(-50%) scale(1); }
-    /* Outro traverse (95 → 100%): circle glides leftward to next-to-triangle */
-    100%  { opacity: 1; left: 92px; transform: translateY(-50%) scale(1); }
+    opacity: 0;
+    /* default left position: seed */
+    left: 68px;      /* (63 - 12 - 17) × 2 */
+    animation:
+      circleSpawn 11s linear infinite,
+      circleX 11s linear infinite;
+    will-change: transform, opacity, left;
   }
 
-  /* "compiling" text — fades in just after push, breathes during the rim
-     phase, fades out at the start of the outro */
-  .compile-text {
+  /* Opacity + scale keyframes — circle trails triangle by 60ms (= 0.545%) */
+  @keyframes circleSpawn {
+    0%     { opacity: 0; transform: translateY(-50%) scale(0.5); }
+    0.55%  { opacity: 0; transform: translateY(-50%) scale(0.5); }
+    6.00%  { opacity: 1; transform: translateY(-50%) scale(1.0); }
+    8.27%  { opacity: 1; transform: translateY(-50%) scale(0.97); }
+    16.00% { opacity: 1; transform: translateY(-50%) scale(1.0); }
+    100%   { opacity: 1; transform: translateY(-50%) scale(1.0); }
+  }
+
+  /* Left position over time, in mockup pixels (anchored to pill via parent).
+     Phases:
+       0    – 0.6s    seed pinned right of seed pill: left = 68
+       0.6  – 0.85s   anticipation: pill 126→120, right pad 24, so circle moves
+                      to left = 120-24-34 = 62. Visually 6px shift.
+       0.85 – 1.7s    push: right pad 24, pill 120→340, circle ends at
+                      left = 340-24-34 = 282
+       1.7  – 8.7s    hold (rim sweep) — circle stays at 282
+       8.7  – 9.7s    outro traverse: 282 → 94 (final idle)
+       9.7  – 11s     hold at 94
+     Timeline % conversion (11s):
+       0%, 5.45% (0.6s), 7.73% (0.85s), 15.45% (1.7s),
+       79.09% (8.7s), 88.18% (9.7s), 100%
+  */
+  @keyframes circleX {
+    0%      { left: 68px; }
+    5.45%   { left: 68px; }
+    7.73%   { left: 62px; }     /* anti shrink */
+    15.45%  { left: 282px; }    /* push end */
+    79.09%  { left: 282px; }    /* hold during rim sweep */
+    88.18%  { left: 94px; }     /* outro traverse complete (final idle x) */
+    100%    { left: 94px; }
+  }
+
+  /* ----- "compiling" label ----- */
+  .compiling {
     position: absolute;
     top: 50%;
     left: 50%;
-    transform: translate(-50%, -50%);
-    color: rgba(255,255,255,0.92);
-    font-size: 14px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    z-index: 2;
+    transform: translate(-50%, calc(-50% + 8px));
+    font-size: 24px;          /* 12pt × 2 */
+    font-weight: 400;
+    letter-spacing: 1px;       /* ~0.5pt × 2 */
+    color: rgba(255,255,255,0.85);
     opacity: 0;
-    text-shadow: 0 0 12px rgba(124,77,255,0.45);
-    animation: textCycle 11s ease-in-out forwards;
-  }
-  @keyframes textCycle {
-    0%    { opacity: 0; }
-    17.3% { opacity: 0; transform: translate(-50%, -50%) translateY(4px); }
-    22.7% { opacity: 0.95; transform: translate(-50%, -50%) translateY(0); }
-    /* Subtle breath during rim */
-    50%   { opacity: 0.85; }
-    80%   { opacity: 1.0; }
-    /* Fade out at start of outro */
-    93%   { opacity: 0; }
-    100%  { opacity: 0; }
+    pointer-events: none;
+    /* ONLY the show/hide opacity lives here. Breath effect lives on the inner span. */
+    animation: compilingShow 11s linear infinite;
+    will-change: opacity, transform;
   }
 
-  /* Waveform bars — outro reveal. Fade in right-to-left in the wake of the
-     leftward-traveling circle. All bar timings happen in the last ~5% of
-     the timeline (the outro window). */
-  .wave {
+  /* Show schedule on 11s loop:
+       1.7s (15.45%)  start fade-in
+       2.0s (18.18%)  full opacity 0.85, at final position
+       8.7s (79.09%)  begin fade-out + downward translate
+       9.1s (82.73%)  fully gone
+  */
+  @keyframes compilingShow {
+    0%, 15.45% { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+    18.18%     { opacity: 1; transform: translate(-50%, -50%); }   /* opacity multiplied by breath */
+    79.09%     { opacity: 1; transform: translate(-50%, -50%); }
+    82.73%     { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+    100%       { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+  }
+
+  /* Breath: subtle sine on the inner span — uses ONLY filter so it doesn't
+     fight the outer show/hide opacity. */
+  .compiling-inner {
+    display: inline-block;
+    animation: compilingBreath 3s ease-in-out infinite;
+  }
+  @keyframes compilingBreath {
+    0%, 100% { filter: brightness(0.95); }
+    50%      { filter: brightness(1.15); }
+  }
+
+  /* ----- Waveform bars ----- */
+  /* Heights in pt → mockup px: [14, 24, 30, 48, 30, 24, 14]
+     Width 6px (3pt), spacing 8px (4pt).
+     Final idle x positions (production, then × 2):
+       Bar 1 left edge ~71pt → 142px
+       Each subsequent: +3+4 = +7pt → +14px
+       Bars at left x: 142, 156, 170, 184, 198, 212, 226 (last right edge 232 = 156·2 + 14...)
+     We position absolutely within the pill. */
+  .bars {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    pointer-events: none;
+  }
+  .bar {
     position: absolute;
     top: 50%;
-    transform: translateY(-50%);
-    height: 64px;
-    left: 142px;
-    width: 170px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    z-index: 1;
-    pointer-events: none;
-  }
-  .wave .bar {
-    flex: 1;
-    background: white;
+    width: 6px;
     border-radius: 3px;
-    height: 12px;
+    background: linear-gradient(to bottom, #FFFFFF 0%, #DADAE2 50%, #898A94 100%);
+    transform: translate(0, -50%) translateY(6px);
     opacity: 0;
-    animation:
-      barFade 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards,
-      barPulse 1.6s ease-in-out infinite;
+    will-change: transform, opacity;
   }
-  /* Outro window starts at 95% of timeline. Bars cascade right-to-left over
-     ~0.4s (the circle's traverse). In our 11s mockup that's 95% → ~99%. */
-  .wave .bar:nth-child(5) { animation-delay: 10.50s, 11.10s; }
-  .wave .bar:nth-child(4) { animation-delay: 10.58s, 11.20s; }
-  .wave .bar:nth-child(3) { animation-delay: 10.66s, 11.30s; height: 28px; }
-  .wave .bar:nth-child(2) { animation-delay: 10.74s, 11.40s; }
-  .wave .bar:nth-child(1) { animation-delay: 10.82s, 11.50s; }
-  @keyframes barFade {
-    from { opacity: 0; transform: scaleY(0.3); }
-    to   { opacity: 1; transform: scaleY(1); }
+  /* Bar group shifted right for proper spacing.
+     Circle right edge sits at x = 128 (94 + 34). With ~52px gap to first bar,
+     bar1 sits at x = 180. Bars span 180 → 270 (90px), leaving ~70px right gap.
+     This visually balances triangle/circle/wave/right-margin. */
+  .bar.b1 { left: 180px; height: 14px; }
+  .bar.b2 { left: 194px; height: 24px; }
+  .bar.b3 { left: 208px; height: 30px; }
+  .bar.b4 { left: 222px; height: 48px; }
+  .bar.b5 { left: 236px; height: 30px; }
+  .bar.b6 { left: 250px; height: 24px; }
+  .bar.b7 { left: 264px; height: 14px; }
+
+  /* Cascade right-to-left during outro.
+     Outro window: 8.7s → 9.7s (1.0s = 9.09% of 11s) handles circle traverse.
+     Bars start at 8.9s (rightmost) and stagger -120ms LATER for each leftward.
+       b7 starts 8.90s
+       b6 starts 9.02s
+       b5 starts 9.14s
+       b4 starts 9.26s
+       b3 starts 9.38s
+       b2 starts 9.50s
+       b1 starts 9.62s
+     Each fades over 220ms.
+     Convert to % of 11000ms:
+       8.90s = 80.91%   end 9.12s = 82.91%
+       9.02s = 82.00%   end 9.24s = 84.00%
+       9.14s = 83.09%   end 9.36s = 85.09%
+       9.26s = 84.18%   end 9.48s = 86.18%
+       9.38s = 85.27%   end 9.60s = 87.27%
+       9.50s = 86.36%   end 9.72s = 88.36%
+       9.62s = 87.45%   end 9.84s = 89.45%
+  */
+  @keyframes barCascade {
+    0%   { opacity: 0; transform: translate(0, -50%) translateY(6px); }
+    100% { opacity: 1; transform: translate(0, -50%) translateY(0); }
   }
-  @keyframes barPulse {
-    0%, 100% { transform: scaleY(0.6); }
-    50%      { transform: scaleY(1.4); }
+  .bar.b7 { animation: barFlash7 11s linear infinite; }
+  .bar.b6 { animation: barFlash6 11s linear infinite; }
+  .bar.b5 { animation: barFlash5 11s linear infinite; }
+  .bar.b4 { animation: barFlash4 11s linear infinite; }
+  .bar.b3 { animation: barFlash3 11s linear infinite; }
+  .bar.b2 { animation: barFlash2 11s linear infinite; }
+  .bar.b1 { animation: barFlash1 11s linear infinite; }
+
+  /* Each bar uses cubic-bezier(0.22, 1, 0.36, 1) over its 220ms window. We
+     simulate that by approximating eased intermediate keyframes. For
+     simplicity and reliability we use a 2-step ease via animation-timing,
+     but since we have one shared timeline, we'll do it via piecewise linear
+     keyframes with ~3 stops per bar. Below: hidden → eased-in → final, then
+     remains visible to end of loop. */
+  @keyframes barFlash7 {
+    0%, 80.91% { opacity: 0; transform: translate(0,-50%) translateY(6px); }
+    82.91%     { opacity: 1; transform: translate(0,-50%) translateY(0); }
+    100%       { opacity: 1; transform: translate(0,-50%) translateY(0); }
+  }
+  @keyframes barFlash6 {
+    0%, 82.00% { opacity: 0; transform: translate(0,-50%) translateY(6px); }
+    84.00%     { opacity: 1; transform: translate(0,-50%) translateY(0); }
+    100%       { opacity: 1; transform: translate(0,-50%) translateY(0); }
+  }
+  @keyframes barFlash5 {
+    0%, 83.09% { opacity: 0; transform: translate(0,-50%) translateY(6px); }
+    85.09%     { opacity: 1; transform: translate(0,-50%) translateY(0); }
+    100%       { opacity: 1; transform: translate(0,-50%) translateY(0); }
+  }
+  @keyframes barFlash4 {
+    0%, 84.18% { opacity: 0; transform: translate(0,-50%) translateY(6px); }
+    86.18%     { opacity: 1; transform: translate(0,-50%) translateY(0); }
+    100%       { opacity: 1; transform: translate(0,-50%) translateY(0); }
+  }
+  @keyframes barFlash3 {
+    0%, 85.27% { opacity: 0; transform: translate(0,-50%) translateY(6px); }
+    87.27%     { opacity: 1; transform: translate(0,-50%) translateY(0); }
+    100%       { opacity: 1; transform: translate(0,-50%) translateY(0); }
+  }
+  @keyframes barFlash2 {
+    0%, 86.36% { opacity: 0; transform: translate(0,-50%) translateY(6px); }
+    88.36%     { opacity: 1; transform: translate(0,-50%) translateY(0); }
+    100%       { opacity: 1; transform: translate(0,-50%) translateY(0); }
+  }
+  @keyframes barFlash1 {
+    0%, 87.45% { opacity: 0; transform: translate(0,-50%) translateY(6px); }
+    89.45%     { opacity: 1; transform: translate(0,-50%) translateY(0); }
+    100%       { opacity: 1; transform: translate(0,-50%) translateY(0); }
   }
 
-  /* Progress rim — same SVG, but for the mockup we sweep over 8s instead
-     of 45s so you can actually see it complete in a reasonable time. */
+  /* ----- RIM PROGRESS ----- */
+  /* SVG sits inside the pill, full size, animates with the pill's width. */
   .rim-svg {
     position: absolute;
-    inset: -8px;
-    width: calc(100% + 16px);
-    height: calc(100% + 16px);
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
     pointer-events: none;
-    z-index: 4;
-    opacity: 0;
-    animation: rimAppear 0.4s ease-out 1.7s forwards;
   }
-  @keyframes rimAppear {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-  }
-  .rim-halo, .rim-core {
+
+  .rim-progress, .rim-halo {
     fill: none;
     stroke-linecap: round;
-    stroke-dasharray: 790 790;
+    transform: rotate(-90deg);
+    transform-origin: 50% 50%;
+    /* The SVG capsule path starts at top-center if drawn that way.
+       We'll use a path that begins at top-center and goes clockwise. */
+    transform: none;
+  }
+
+  .rim-progress {
+    stroke: url(#rimGradient);
+    stroke-width: 5px;            /* 2.5pt × 2 */
+    /* Path length ≈ 789.6 mockup px */
+    stroke-dasharray: 790;
     stroke-dashoffset: 790;
-    /* Rim sweep: starts at 1.7s, completes at 1.7s + 8s = 9.7s.
-       Followed by the comet ignite during the outro (after 10.5s). */
-    animation: rimGrow 8s linear 1.7s forwards;
+    opacity: 0;
+    animation: rimSweep 11s linear infinite, rimVisible 11s linear infinite;
+    will-change: stroke-dashoffset, opacity;
   }
   .rim-halo {
-    stroke: #7C4DFF;
-    stroke-width: 5;
-    opacity: 0.35;
-    filter: blur(3px);
-  }
-  .rim-core {
-    stroke: url(#cometRimGradient);
-    stroke-width: 2.5;
-  }
-  @keyframes rimGrow {
-    from { stroke-dashoffset: 790; }
-    to   { stroke-dashoffset: 0; }
+    stroke: var(--accent);
+    stroke-width: 10px;           /* 5pt × 2 */
+    stroke-opacity: 0.35;
+    filter: blur(6px);            /* 3pt × 2 */
+    stroke-dasharray: 790;
+    stroke-dashoffset: 790;
+    opacity: 0;
+    animation: rimSweep 11s linear infinite, rimVisible 11s linear infinite;
+    will-change: stroke-dashoffset, opacity;
   }
 
-  /* Once the rim is full, it transitions into the normal pill comet — a
-     bright moving sweep that orbits the rim. We fade out the slow rim and
-     fade in the comet at the same time during the outro. */
-  .comet-rim {
+  /* Sweep timeline:
+       1.7s  (15.45%)  begins (offset = 790, just appeared)
+       9.7s  (88.18%)  reaches offset 0 — wait, sweep is 8s ending at 9.7s? 
+                       Brief says rim ends at ~10s. Outro is last ~1.3s.
+                       Sweep 1.7s → 9.7s is 8s. Outro 9.7s → 11s = 1.3s. ✓
+                       (Rim fade-out ~0.6s, then comet ignite, etc.)
+  */
+  @keyframes rimSweep {
+    0%, 15.45% { stroke-dashoffset: 790; }
+    88.18%     { stroke-dashoffset: 0; }
+    100%       { stroke-dashoffset: 0; }
+  }
+  @keyframes rimVisible {
+    0%, 15.45% { opacity: 0; }
+    16.36%     { opacity: 1; }     /* quick fade-in once started */
+    88.18%     { opacity: 1; }
+    93.64%     { opacity: 0; }     /* 0.6s fade-out (= 5.45%) */
+    100%       { opacity: 0; }
+  }
+
+  /* ----- COMET RIM (idle state, post-handoff) ----- */
+  /* SVG-based: same capsule path as the progress rim, stroked with a
+     dasharray that creates a short "comet" arc which orbits the perimeter
+     by animating stroke-dashoffset. Two stacked strokes: blurred halo +
+     crisp core. We layer with a static thin white rim underneath. */
+
+  .comet-svg {
     position: absolute;
-    inset: -3px;
-    border-radius: 51px;
-    padding: 3px;
-    background: conic-gradient(from 0deg,
-      transparent 0%,
-      transparent 50%,
-      rgba(255,255,255,0.6) 60%,
-      #7C4DFF 70%,
-      #4DA3FF 76%,
-      transparent 88%,
-      transparent 100%);
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-            mask-composite: exclude;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
     opacity: 0;
-    z-index: 5;
-    animation:
-      cometFadeIn 0.6s ease-out 10.5s forwards,
-      cometSpin 4.4s linear 10.5s infinite;
+    animation: cometIgnite 11s linear infinite;
+    will-change: opacity, filter;
+  }
+
+  /* Path total length ≈ 790. We make a comet that's ~30% of the perimeter
+     bright, fading to nothing on both ends via gradient stops. The dash
+     pattern is dash=cometLen, gap=perimeter-cometLen so only one comet is
+     visible at a time. */
+  .comet-core {
+    fill: none;
+    stroke: url(#cometGradient);
+    stroke-width: 2.8px;       /* ~1.4pt × 2 */
+    stroke-linecap: round;
+    stroke-dasharray: 240 550; /* ~30% bright, rest gap */
+    stroke-dashoffset: 0;
+    animation: cometOrbit 4.4s linear infinite;
+    will-change: stroke-dashoffset;
+  }
+  .comet-halo-stroke {
+    fill: none;
+    stroke: url(#cometHaloGradient);
+    stroke-width: 8px;         /* ~4pt × 2 */
+    stroke-linecap: round;
+    stroke-opacity: 0.55;
+    filter: blur(4px);
+    stroke-dasharray: 240 550;
+    stroke-dashoffset: 0;
+    animation: cometOrbit 4.4s linear infinite;
+    will-change: stroke-dashoffset;
+  }
+
+  /* Negative direction so the comet runs clockwise from top-center. */
+  @keyframes cometOrbit {
+    0%   { stroke-dashoffset: 0; }
+    100% { stroke-dashoffset: -790; }
+  }
+
+  /* Static thin white rim @ 14% */
+  .static-rim {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--pill-r);
+    border: 2px solid rgba(255,255,255,0.14);
+    box-sizing: border-box;
+    opacity: 0;
+    animation: staticRimShow 11s linear infinite;
     pointer-events: none;
   }
-  @keyframes cometFadeIn { from { opacity: 0; } to { opacity: 1; } }
-  @keyframes cometSpin   { to { transform: rotate(360deg); } }
 
-  /* Fade out the slow progress rim during the outro */
-  .rim-svg {
-    animation:
-      rimAppear 0.4s ease-out 1.7s forwards,
-      rimDisappear 0.6s ease-out 10.5s forwards;
+  /* Comet ignite: ~250ms after rim fade-out completes (at 93.64%).
+     Ignite at 95.91%, flash brightness 1.6× for 200ms, settle. */
+  @keyframes cometIgnite {
+    0%, 93.64% { opacity: 0; filter: brightness(1); }
+    95.91%     { opacity: 1; filter: brightness(1.6); }
+    97.73%     { opacity: 1; filter: brightness(1.0); }
+    100%       { opacity: 1; filter: brightness(1.0); }
   }
-  @keyframes rimDisappear { to { opacity: 0; } }
+  @keyframes staticRimShow {
+    0%, 93.64% { opacity: 0; }
+    97.73%     { opacity: 1; }
+    100%       { opacity: 1; }
+  }
 
-  .phase-track {
-    margin-top: 40px;
-    display: grid;
-    grid-template-columns: 7% 5% 11% 5% 70% 2%;
-    gap: 4px;
-    font-size: 11px;
-    font-family: ui-monospace, monospace;
-    color: rgba(255,255,255,0.5);
-  }
-  .phase-track > div {
-    background: rgba(255,255,255,0.04);
-    border-left: 2px solid rgba(255,255,255,0.20);
-    padding: 6px 10px;
-    border-radius: 4px;
-  }
-  .phase-track > div strong { color: rgba(255,255,255,0.85); display: block; margin-bottom: 2px; }
-  .phase-track > div.outro { border-left-color: rgba(124,77,255,0.5); }
+  /* The breath animation just runs continuously — independent of the show
+     timeline. */
 </style>
+</head>
+<body>
 
 <div class="stage" id="stage">
-  <div class="timing-readout">11s mockup · spec: 2.5s intro · 45s rim · ~1s outro</div>
-  <div class="mockup-note">Mockup: rim sweeps in 8s<br>(spec: 45s default, real progress when available)</div>
+  <div class="caption">CyphrWhispr · first install · pill spawn</div>
+  <button class="replay" id="replay">Replay</button>
 
-  <div class="pill-wrapper">
-    <div class="pill">
-      <div class="figure triangle"></div>
-      <div class="figure dot"></div>
-      <div class="compile-text">compiling</div>
-      <div class="wave">
-        <div class="bar"></div><div class="bar"></div>
-        <div class="bar"></div><div class="bar"></div>
-        <div class="bar"></div>
+  <div class="pill-anchor">
+    <div class="pill" id="pill">
+
+      <!-- Static thin rim (idle state) -->
+      <div class="static-rim"></div>
+
+      <!-- Comet rim (idle state) — SVG-based, traces the capsule outline -->
+      <svg class="comet-svg" viewBox="0 0 340 96" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="cometGradient" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox">
+            <stop offset="0%"   stop-color="#5B6FFF" stop-opacity="0"/>
+            <stop offset="25%"  stop-color="#5B6FFF" stop-opacity="0.6"/>
+            <stop offset="60%"  stop-color="#7C4DFF" stop-opacity="1"/>
+            <stop offset="90%"  stop-color="#FFFFFF" stop-opacity="0.95"/>
+            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+          </linearGradient>
+          <linearGradient id="cometHaloGradient" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox">
+            <stop offset="0%"   stop-color="#7C4DFF" stop-opacity="0"/>
+            <stop offset="50%"  stop-color="#7C4DFF" stop-opacity="0.7"/>
+            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="M170,0 L292,0 A48,48 0 0 1 292,96 L48,96 A48,48 0 0 1 48,0 L170,0"
+              class="comet-halo-stroke"/>
+        <path d="M170,0 L292,0 A48,48 0 0 1 292,96 L48,96 A48,48 0 0 1 48,0 L170,0"
+              class="comet-core"/>
+      </svg>
+
+      <!-- Progress rim during compile -->
+      <svg class="rim-svg" viewBox="0 0 340 96" preserveAspectRatio="none">
+        <defs>
+          <!-- Path: capsule outline, starting at top-center, going clockwise.
+               Pill is 340 wide, 96 tall, radius 48.
+               Top edge from x=48 to x=292 (length 244).
+               Right cap arc 180°, radius 48 (length π·48 ≈ 150.8).
+               Bottom edge from x=292 to x=48 (length 244).
+               Left cap arc 180° (length 150.8).
+               Total ≈ 789.6.
+               To start at TOP CENTER (170,0): move L from 170,0 to 292,0,
+               then arc, etc., and end with M back at 170,0 by drawing an
+               additional segment from 48,0 to 170,0 to complete the loop. -->
+          <linearGradient id="rimGradient" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox">
+            <stop offset="0%"   stop-color="#5B6FFF" stop-opacity="0.6"/>
+            <stop offset="50%"  stop-color="#7C4DFF" stop-opacity="1"/>
+            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+          </linearGradient>
+        </defs>
+
+        <!-- Use a single capsule path starting at top-center going clockwise.
+             Path d: M170,0 → L292,0 → A48,48 0 0 1 292,96 → L48,96
+             → A48,48 0 0 1 48,0 → L170,0 -->
+        <path id="rimPath"
+              d="M170,0 L292,0 A48,48 0 0 1 292,96 L48,96 A48,48 0 0 1 48,0 L170,0"
+              class="rim-halo"/>
+        <path d="M170,0 L292,0 A48,48 0 0 1 292,96 L48,96 A48,48 0 0 1 48,0 L170,0"
+              class="rim-progress"/>
+      </svg>
+
+      <!-- Inner figures -->
+      <div class="triangle">
+        <svg viewBox="0 0 36 32" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="0,0 36,0 18,32" fill="#FFFFFF"/>
+        </svg>
       </div>
-      <div class="comet-rim"></div>
+
+      <div class="circle"></div>
+
+      <!-- Waveform bars -->
+      <div class="bars">
+        <div class="bar b1"></div>
+        <div class="bar b2"></div>
+        <div class="bar b3"></div>
+        <div class="bar b4"></div>
+        <div class="bar b5"></div>
+        <div class="bar b6"></div>
+        <div class="bar b7"></div>
+      </div>
+
+      <!-- "compiling" label -->
+      <div class="compiling"><span class="compiling-inner">compiling</span></div>
+
     </div>
-
-    <svg class="rim-svg" viewBox="-8 -8 356 112" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="cometRimGradient" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0%"  stop-color="rgba(255,255,255,0.85)"/>
-          <stop offset="40%" stop-color="#7C4DFF"/>
-          <stop offset="100%" stop-color="#4DA3FF"/>
-        </linearGradient>
-      </defs>
-      <path class="rim-halo" d="M 170 0 L 292 0 A 48 48 0 0 1 292 96 L 48 96 A 48 48 0 0 1 48 0 Z"/>
-      <path class="rim-core" d="M 170 0 L 292 0 A 48 48 0 0 1 292 96 L 48 96 A 48 48 0 0 1 48 0 Z"/>
-    </svg>
   </div>
-
-  <button class="replay-btn" onclick="replay()">↻ Replay full cycle</button>
-</div>
-
-<div class="phase-track">
-  <div><strong>0 → 0.6s</strong>Spawn</div>
-  <div><strong>0.6 → 0.85s</strong>Antic.</div>
-  <div><strong>0.85 → 1.7s</strong>Push (synced with right edge!)</div>
-  <div><strong>1.7s</strong>Rim begins</div>
-  <div><strong>1.7 → 46.7s (45s spec / 8s in mockup)</strong>Rim sweeps clockwise from top centre — leading edge maps to actual compile fraction (or 45s default cadence as fallback)</div>
-  <div class="outro"><strong>Outro</strong></div>
-</div>
-<div style="margin-top: 4px; padding: 8px 12px; border-left: 2px solid rgba(124,77,255,0.5); background: rgba(124,77,255,0.06); font-family: ui-monospace, monospace; font-size: 11px; color: rgba(255,255,255,0.7); border-radius: 4px;">
-  <strong style="color: rgba(255,255,255,0.95);">Outro (~1s when rim hits 100%)</strong> — Slow rim fades out · "compiling" fades out · Circle glides leftward from far right to next-to-triangle position · Bars cascade in right-to-left in the circle's wake · Comet rim fades in (the normal 4.4s sweep) · Pill is now in the warm "ready to listen" state.
-</div>
-
-<div style="margin-top: 24px; padding: 16px; background: rgba(255,255,255,0.04); border-radius: 10px; color: var(--text-secondary); font-size: 13px; line-height: 1.7;">
-  <h3 style="color: var(--text-primary); margin-bottom: 8px;">Notes on the mockup</h3>
-  <ul style="padding-left: 20px;">
-    <li>The mockup runs the full cycle in 11 seconds (2.5s intro + 8s rim + 0.5s outro) so you can watch every phase. In production, the rim sweep is 45 seconds (or driven by actual WhisperKit compile progress when the callback gives us a fraction). Everything else is the spec timing.</li>
-    <li><strong>Watch the push.</strong> You should see the circle visually pinned to the right edge as the pill grows. They move at the exact same speed because <code>circle_left = pill_width − 58</code> with both animations on the same easing curve.</li>
-    <li><strong>Watch the outro.</strong> When the rim completes its sweep at ~10.5s, the slow rim fades, the circle glides leftward, the bars cascade in right-to-left behind it, and the normal comet rim takes over. Same end-of-spawn-v5 choreography you approved.</li>
-  </ul>
-  <h3 style="color: var(--text-primary); margin-top: 16px; margin-bottom: 8px;">Spec decisions to confirm</h3>
-  <ul style="padding-left: 20px;">
-    <li><strong>Real progress mapping</strong> — confirmed, will use WhisperKit compile fraction when available, 45s default cadence as fallback.</li>
-    <li><strong>If compile takes longer than the rim is full</strong> — only matters in fallback mode (no real progress). Spec proposal: pulse the full ring for as long as compile is still running, then play the outro the moment compile completes. Acceptable?</li>
-    <li><strong>Word "compiling"</strong> — keep, or want different (preparing / optimising / etc)?</li>
-  </ul>
 </div>
 
 <script>
-  function replay() {
-    const stage = document.getElementById('stage');
-    const clone = stage.cloneNode(true);
-    stage.parentNode.replaceChild(clone, stage);
-    document.getElementById('stage').querySelector('.replay-btn').onclick = replay;
-  }
+  // Replay button: re-trigger CSS animations by toggling a class.
+  const replay = document.getElementById('replay');
+  const stage = document.getElementById('stage');
+  replay.addEventListener('click', () => {
+    // Restart all animations by cloning the pill node.
+    const pill = document.getElementById('pill');
+    const clone = pill.cloneNode(true);
+    pill.parentNode.replaceChild(clone, pill);
+    clone.id = 'pill';
+  });
 </script>
+
+</body>
+</html>
