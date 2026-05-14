@@ -1,0 +1,76 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. A few details up front make it dramatically faster to fix.
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: "e.g. 14.5 (23F79)"
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Chip and RAM
+      placeholder: "e.g. M2 Pro, 32 GB"
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Whisper model in use
+      placeholder: "e.g. distil-whisper-large-v3 (Core ML)"
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: CyphrWhispr version (or commit SHA)
+      placeholder: "e.g. 0.1.0 or commit f7902ed"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Be specific — exact hotkey, exact target app, exact spoken phrase if relevant.
+      placeholder: |
+        1. Open Notion in Safari
+        2. Click into a text block
+        3. Hold ⌥Space and say "hello"
+        4. Release
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console logs (optional)
+      description: Filter Console.app by `subsystem == "com.cyphr.whispr"` and paste relevant lines.
+      render: shell
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
