@@ -2,98 +2,177 @@ import SwiftUI
 import AppKit
 
 /// Settings → General. Daily-driver behaviour for the dictation pill.
-/// Layout matches the mockup: page title + subtitle, then a single card with
-/// horizontally-divided rows. We add two rows beyond the mockup's four —
-/// Dictation language (so multilingual support has a home now that it's
-/// off the Models tab) and Polish (so the Apple Intelligence cleanup
-/// feature stays reachable without adding a sixth sidebar item).
+/// v2 glass redesign — three cards: Behaviour (launch-at-login + hide-
+/// menu-bar), Activation (mode + language + pill position), and Polish
+/// (Apple Intelligence cleanup toggle + customise sheet).
+///
+/// Two production-only rows the v2 reference doesn't show are preserved
+/// here: the dictation language dropdown (multilingual support) and the
+/// Polish row that opens the legacy PolishTabView in a sheet.
 struct GeneralTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
-    @State private var showPolishPromptSheet = false
+    @State private var showPolishSheet = false
 
     var body: some View {
-        SettingsTabContainer(
-            title: "General",
-            subtitle: "Daily-driver behaviour for the dictation pill."
-        ) {
-            SettingsCard {
-                VStack(spacing: 0) {
-                    launchAtLoginRow
-                    CardRowDivider()
-                    hideMenuBarRow
-                    CardRowDivider()
-                    activationModeRow
-                    CardRowDivider()
-                    dictationLanguageRow
-                    CardRowDivider()
-                    polishRow
-                    CardRowDivider()
-                    pillPositionRow
-                }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                SectionHead3(
+                    title: "General",
+                    subtitle: "Daily-driver behaviour for the dictation pill."
+                )
+
+                behaviourCard
+                activationCard
+                polishCard
             }
+            .padding(.horizontal, 30)
+            .padding(.top, 26)
+            .padding(.bottom, 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .sheet(isPresented: $showPolishPromptSheet) {
+        .sheet(isPresented: $showPolishSheet) {
             PolishPromptSheet()
                 .environmentObject(prefs)
         }
     }
 
-    // MARK: - Rows
+    // MARK: - Behaviour card
 
-    private var launchAtLoginRow: some View {
-        CardRow(
-            title: "Launch at login",
-            description: "Open CyphrWhispr automatically when you sign in."
-        ) {
-            Toggle("", isOn: $prefs.launchAtLogin)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(prefs.accent)
+    private var behaviourCard: some View {
+        Card3(title: "Behaviour", meta: "2 settings") {
+            Row3(label: "Launch at login",
+                 sub: "Open CyphrWhispr automatically when you sign in.") {
+                Toggle3(isOn: $prefs.launchAtLogin)
+            }
+            Row3(label: "Hide menu bar icon",
+                 sub: "Run silently. Hotkey still works.",
+                 isLast: true) {
+                Toggle3(isOn: $prefs.hideMenuBarIcon)
+            }
         }
     }
 
-    private var hideMenuBarRow: some View {
-        CardRow(
-            title: "Hide menu bar icon",
-            description: "Run silently. Hotkey still works."
-        ) {
-            Toggle("", isOn: $prefs.hideMenuBarIcon)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(prefs.accent)
+    // MARK: - Activation card
+
+    private var activationCard: some View {
+        Card3(title: "Activation", meta: "hotkey behaviour") {
+            Row3(label: "Activation mode",
+                 sub: "How the hotkey starts and stops a dictation session.") {
+                Segmented3(
+                    value: Binding(
+                        get: { prefs.activationMode },
+                        set: { prefs.activationMode = $0 }
+                    ),
+                    options: PreferencesStore.ActivationMode.allCases.map {
+                        ($0, $0.displayName)
+                    }
+                )
+            }
+            Row3(label: "Dictation language",
+                 sub: dictationLanguageHint) {
+                languageMenu
+            }
+            Row3(label: "Pill position",
+                 sub: "Bottom-centred. Drag to relocate; Shift-drag snaps to grid.",
+                 isLast: true) {
+                Text("centred · 80 pt from bottom")
+                    .font(CWFont.mono(size: CWFont.s12, weight: .regular))
+                    .foregroundColor(.cwFg2)
+            }
         }
     }
 
-    private var activationModeRow: some View {
-        CardRow(
-            title: "Activation mode",
-            description: "How the hotkey starts and stops a dictation session."
-        ) {
-            DropdownButton(
-                currentLabel: prefs.activationMode.displayName,
-                options: PreferencesStore.ActivationMode.allCases.map { mode in
-                    DropdownOption(
-                        label: mode.displayName,
-                        isSelected: prefs.activationMode == mode
-                    ) {
-                        prefs.activationMode = mode
+    // MARK: - Polish card
+
+    private var polishCard: some View {
+        Card3(title: "Polish", meta: "Apple Intelligence") {
+            Row3(label: "Polish (Apple Intelligence)",
+                 sub: "Clean up filler words and punctuation on-device after each dictation.",
+                 isLast: !prefs.polishEnabled) {
+                Toggle3(isOn: $prefs.polishEnabled)
+            }
+            if prefs.polishEnabled {
+                Row3(label: "Cleanup instructions",
+                     sub: "Edit the prompt sent to the on-device language model.",
+                     isLast: true) {
+                    CWButton(title: "Customise…",
+                             variant: .ghost,
+                             indicator: .glyph("›")) {
+                        showPolishSheet = true
                     }
                 }
-            )
+            }
         }
     }
 
-    private var dictationLanguageRow: some View {
-        CardRow(
-            title: "Dictation language",
-            description: dictationLanguageHint
-        ) {
-            DropdownButton(
-                currentLabel: currentLanguageDisplay,
-                options: languageDropdownOptions,
-                enabled: prefs.activeModelSupportsLanguageChoice
+    // MARK: - Language menu
+
+    /// Styled SwiftUI Menu that mimics the v2 control aesthetic. Disabled
+    /// (greyed out, tap-ignored) when the active model can't decode
+    /// anything other than English — see PreferencesStore for the gate.
+    @ViewBuilder private var languageMenu: some View {
+        let enabled = prefs.activeModelSupportsLanguageChoice
+        Menu {
+            Button {
+                prefs.selectedLanguageCode = TranscriptionLanguageMode.autoCode
+            } label: {
+                HStack {
+                    Text("Auto-detect — lock per session")
+                    if prefs.selectedLanguageCode == TranscriptionLanguageMode.autoCode {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+            Button {
+                prefs.selectedLanguageCode = TranscriptionLanguageMode.autoPerPhraseCode
+            } label: {
+                HStack {
+                    Text("Auto-detect — per phrase (experimental)")
+                    if prefs.selectedLanguageCode == TranscriptionLanguageMode.autoPerPhraseCode {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+            Divider()
+            ForEach(TranscriptionLanguageCatalog.supported, id: \.code) { lang in
+                let label = lang.nativeName.map { "\(lang.displayName) — \($0)" } ?? lang.displayName
+                Button {
+                    prefs.selectedLanguageCode = lang.code
+                } label: {
+                    HStack {
+                        Text(label)
+                        if prefs.selectedLanguageCode == lang.code {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(currentLanguageDisplay)
+                    .font(CWFont.mono(size: CWFont.s12, weight: .medium))
+                    .foregroundColor(enabled ? .cwFg1 : .cwFg3)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(enabled ? .cwFg2 : .cwFg3)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.white.opacity(enabled ? 0.05 : 0.02))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(Color.cwBorder.opacity(enabled ? 1.0 : 0.4),
+                                    lineWidth: 1)
+                    )
             )
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .disabled(!enabled)
+        .fixedSize()
     }
 
     private var currentLanguageDisplay: String {
@@ -106,42 +185,6 @@ struct GeneralTabView: View {
         }
     }
 
-    /// Catalog of options for the language pull-down. Two auto modes at the
-    /// top, then the full curated language catalog in catalog order.
-    private var languageDropdownOptions: [DropdownOption] {
-        var opts: [DropdownOption] = []
-        opts.append(
-            DropdownOption(
-                label: "Auto-detect — lock per session",
-                isSelected: prefs.selectedLanguageCode == TranscriptionLanguageMode.autoCode
-            ) {
-                prefs.selectedLanguageCode = TranscriptionLanguageMode.autoCode
-            }
-        )
-        opts.append(
-            DropdownOption(
-                label: "Auto-detect — per phrase (experimental)",
-                isSelected: prefs.selectedLanguageCode == TranscriptionLanguageMode.autoPerPhraseCode
-            ) {
-                prefs.selectedLanguageCode = TranscriptionLanguageMode.autoPerPhraseCode
-            }
-        )
-        for lang in TranscriptionLanguageCatalog.supported {
-            let label = lang.nativeName.map { "\(lang.displayName) — \($0)" } ?? lang.displayName
-            opts.append(
-                DropdownOption(
-                    label: label,
-                    isSelected: prefs.selectedLanguageCode == lang.code
-                ) {
-                    prefs.selectedLanguageCode = lang.code
-                }
-            )
-        }
-        return opts
-    }
-
-    /// Caption under the language row — same logic as the old language card
-    /// in Models, just adapted to fit the cleaner General-tab layout.
     private var dictationLanguageHint: String {
         if !prefs.activeModelSupportsLanguageChoice {
             return "Switch to a multilingual model on the Models tab to enable."
@@ -157,45 +200,13 @@ struct GeneralTabView: View {
             return "Pinned to \(name). Highest accuracy — no detection penalty."
         }
     }
-
-    private var polishRow: some View {
-        CardRow(
-            title: "Polish (Apple Intelligence)",
-            description: "Clean up filler words and punctuation on-device after each dictation."
-        ) {
-            HStack(spacing: 10) {
-                if prefs.polishEnabled {
-                    Button("[Customise…]") { showPolishPromptSheet = true }
-                        .buttonStyle(NativeMacButtonStyle())
-                        .accessibilityLabel("Customise polish prompt")
-                }
-                Toggle("", isOn: $prefs.polishEnabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .tint(prefs.accent)
-            }
-        }
-    }
-
-    private var pillPositionRow: some View {
-        CardRow(
-            title: "Pill position",
-            description: "Bottom-centred. Drag to relocate; Shift-drag snaps to grid."
-        ) {
-            Text("centred · 80 pt from bottom")
-                .font(SettingsDesign.krCaption(size: 12))
-                .foregroundStyle(SettingsDesign.textSecondary)
-                .multilineTextAlignment(.trailing)
-        }
-    }
 }
 
 // MARK: - Polish prompt sheet
 
-/// Modal sheet that hosts the full Polish prompt editor. Reachable from the
-/// "Customise…" button on the Polish row in General. Hosts the same
-/// PolishTabView content the old sidebar tab used, just in a sheet so we
-/// don't need a sixth sidebar item.
+/// Modal sheet that hosts the full Polish prompt editor. Reachable from
+/// the Polish row in General when Polish is enabled. PolishTabView itself
+/// still uses the legacy components — that's a separate migration.
 private struct PolishPromptSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var prefs: PreferencesStore
@@ -216,9 +227,6 @@ private struct PolishPromptSheet: View {
 
             Divider().overlay(SettingsDesign.divider)
 
-            // Inline the legacy PolishTabView for now — it has the full
-            // prompt + customise affordances. Wrapped in a ScrollView so
-            // long prompts fit.
             PolishTabView()
                 .environmentObject(prefs)
                 .padding(.horizontal, 24)
