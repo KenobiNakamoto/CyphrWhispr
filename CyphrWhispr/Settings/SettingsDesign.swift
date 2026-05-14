@@ -183,6 +183,144 @@ enum SettingsDesign {
     static let windowBackground: Color = pageBackground
 }
 
+// MARK: - v2 glass design tokens
+//
+// New token namespace introduced with the `v2 glass` redesign. Mirrors the
+// Claude-Design `colors_and_type.css` source-of-truth 1:1. Lives alongside
+// the legacy `SettingsDesign` tokens above so the migration can land in
+// stages — once every tab is on `cw*` / `Card3` / `Row3`, the legacy block
+// above is safe to delete.
+//
+// Reference: `/Visual Aides/Setting Menu/Reference Design Files`.
+
+extension Color {
+    // Backdrop gradient stops
+    static let cwBgDeepest = Color(red: 0.020, green: 0.020, blue: 0.024)  // #050506
+    static let cwBgMid     = Color(red: 0.043, green: 0.043, blue: 0.051)  // #0B0B0D
+    static let cwBgTop     = Color(red: 0.098, green: 0.102, blue: 0.125)  // #191A20
+    static let cwBg        = Color(red: 0.055, green: 0.055, blue: 0.071)  // #0E0E12
+
+    // Glass surfaces
+    static let cwSurface1    = Color(red: 0.094, green: 0.094, blue: 0.125) // #181820
+    static let cwSurface2    = Color(red: 0.122, green: 0.122, blue: 0.157) // #1F1F28
+    static let cwSurfaceCard = Color(red: 0.086, green: 0.086, blue: 0.110).opacity(0.62) // glass card fill
+
+    // Borders
+    static let cwBorder       = Color.white.opacity(0.08)
+    static let cwBorderStrong = Color.white.opacity(0.14)
+    static let cwBorderCard   = Color.white.opacity(0.10)
+
+    // Foregrounds
+    static let cwFg1 = Color.white.opacity(0.95)
+    static let cwFg2 = Color.white.opacity(0.62)
+    static let cwFg3 = Color.white.opacity(0.42)
+
+    // Brand accent (default — runtime value lives in PreferencesStore.accent)
+    static let cwAccent          = Color(red: 0.486, green: 0.302, blue: 1.0)  // #7C4DFF
+    static let cwAccentSecondary = Color(red: 0.302, green: 0.373, blue: 1.0)  // #4D5FFF
+
+    // Curated accent presets — these are the swatches the user picks from on
+    // the Customization tab. Hex values are mirrored in `AccentPreset.presets`.
+    static let cwPresetViolet  = Color(red: 0.486, green: 0.302, blue: 1.000)  // #7C4DFF
+    static let cwPresetMagenta = Color(red: 0.910, green: 0.298, blue: 0.788)  // #E84CC9
+    static let cwPresetCrimson = Color(red: 1.000, green: 0.231, blue: 0.361)  // #FF3B5C
+    static let cwPresetAmber   = Color(red: 1.000, green: 0.608, blue: 0.231)  // #FF9B3B
+    static let cwPresetMint    = Color(red: 0.231, green: 0.831, blue: 0.651)  // #3BD4A6
+    static let cwPresetCobalt  = Color(red: 0.231, green: 0.510, blue: 0.965)  // #3B82F6
+
+    // Semantic aliases — read these from feature code instead of the preset
+    // names so the meaning is obvious at the call site.
+    static let cwSuccess = cwPresetMint
+    static let cwWarning = cwPresetAmber
+    static let cwDanger  = cwPresetCrimson
+    static let cwInfo    = cwPresetCobalt
+}
+
+// MARK: - Backdrop gradient
+
+extension LinearGradient {
+    /// Vertical gradient backdrop for the whole Settings window. Top is the
+    /// slightly-lit `cwBgTop`, bottom is the near-black `cwBgDeepest`. The
+    /// accent radial glows are painted on top of this in `SettingsView`.
+    static var cwBackdrop: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: .cwBgTop,     location: 0.0),
+                .init(color: .cwBgMid,     location: 0.55),
+                .init(color: .cwBgDeepest, location: 1.0),
+            ],
+            startPoint: .top, endPoint: .bottom
+        )
+    }
+}
+
+// MARK: - v2 typography
+//
+// Same Monaspace Krypton family the legacy `kr*` helpers use, but exposed
+// through a flatter API — `CWFont.mono(size:weight:)` — and a numeric size
+// ramp (s9 / s10 / s11 / s12 / s13 / s14 / s17 / s20 / s22 / s26) that
+// mirrors the design system's `--fs-*` CSS variables.
+
+enum CWFont {
+    static let family = "MonaspaceKrypton-Regular"
+
+    static func mono(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        let name: String
+        switch weight {
+        case .medium:                  name = "MonaspaceKrypton-Medium"
+        case .semibold:                name = "MonaspaceKrypton-SemiBold"
+        case .bold, .heavy, .black:    name = "MonaspaceKrypton-Bold"
+        default:                       name = "MonaspaceKrypton-Regular"
+        }
+        return .custom(name, size: size)
+    }
+
+    // Ramp (matches --fs-* in colors_and_type.css)
+    static let s9:  CGFloat = 9
+    static let s10: CGFloat = 10
+    static let s11: CGFloat = 11
+    static let s12: CGFloat = 12
+    static let s13: CGFloat = 13
+    static let s14: CGFloat = 14
+    static let s17: CGFloat = 17
+    static let s20: CGFloat = 20
+    static let s22: CGFloat = 22
+    static let s26: CGFloat = 26
+}
+
+// MARK: - Spacing / radii / motion
+
+enum CWSpace {
+    static let s1: CGFloat = 4
+    static let s2: CGFloat = 8
+    static let s3: CGFloat = 12
+    static let s4: CGFloat = 16
+    static let s5: CGFloat = 20
+    static let s6: CGFloat = 24
+    static let s7: CGFloat = 32
+}
+
+enum CWRadius {
+    static let xs:   CGFloat = 4
+    static let sm:   CGFloat = 7
+    static let md:   CGFloat = 10
+    static let lg:   CGFloat = 12       // glass cards
+    static let xl:   CGFloat = 14       // window
+    static let pill: CGFloat = 999
+}
+
+extension Animation {
+    /// Snappy motion for hover / press feedback — under 150ms so taps feel direct.
+    static var cwFast: Animation { .timingCurve(0.16, 0.84, 0.30, 1.0, duration: 0.120) }
+    /// Standard motion for tab transitions, sheet swaps, sidebar selection.
+    static var cwMain: Animation { .timingCurve(0.16, 0.84, 0.30, 1.0, duration: 0.220) }
+}
+
+// Note: `Color(hex:)` already exists in `Color+Hex.swift` (more capable —
+// also handles 8-char `RRGGBBAA`). The v2 design system expects a 6-char
+// `Color(hex:)` initialiser; the production helper satisfies that interface,
+// so no duplicate is added here.
+
 // MARK: - Card
 
 /// The shared rounded card that wraps each tab's content sections. Flat dark
