@@ -5,16 +5,28 @@ import SwiftUI
 /// accent-using view via `PreferencesStore.accent`.
 ///
 /// Two cards:
-///   1. A pill-preview stage that lets the user see the comet rim and
-///      waveform retint live as they pick. The preview is a stand-in for
-///      the production `PillView` — the real one is wired to
-///      AppCoordinator + a phase-driven view model, which would need to
-///      be unspooled into something previewable. The visuals match the
-///      live pill closely enough for accent-picking purposes.
+///   1. A pill-preview stage hosting the **real** production `PillView`
+///      driven by a local `PillViewModel` pinned to `.listening`. That
+///      means visual changes to the pill (rim, waveform, glyph layout,
+///      shadows) only need to happen in `PillView.swift` — they
+///      automatically show up here too. The viewmodel reads
+///      `PreferencesStore.shared` (same singleton injected as the
+///      Settings environment object), so picking a new accent retints
+///      the comet rim in real time.
 ///   2. An accent-picker card with the six curated presets + a custom
 ///      hex picker (macOS-only).
 struct CustomizationTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
+
+    /// Production pill viewmodel held by the customization preview.
+    /// `@StateObject` so it survives view re-evaluations during accent
+    /// changes (without this the comet rim's TimelineView phase would
+    /// reset on every preference write). Pinned to `.listening` with a
+    /// static-ish level so the waveform reads as alive — WaveformView's
+    /// `.listening` branch drives per-bar jitter from `TimelineView`
+    /// regardless of the level value, so the bars twitch even without
+    /// real audio input.
+    @StateObject private var previewPill = PillViewModel()
 
     /// Maps the current `prefs.accentHex` back to one of the curated
     /// preset names (case-insensitive). Falls back to "Custom" when the
@@ -84,8 +96,15 @@ struct CustomizationTabView: View {
                 )
 
             VStack(spacing: 18) {
-                PillPreview()
-                    .frame(width: 170, height: 48)
+                // Production pill — same code path as the live menu-bar
+                // pill, just driven by a local viewmodel. PillView applies
+                // its own 36/36/48/36 padding for shadow bleed; the stage
+                // is already minHeight=200 so it fits comfortably.
+                PillView(viewModel: previewPill)
+                    .onAppear {
+                        previewPill.phase = .listening
+                        previewPill.level = 0.55
+                    }
 
                 HStack(spacing: 8) {
                     Text("THE PILL")
@@ -108,98 +127,7 @@ struct CustomizationTabView: View {
     }
 }
 
-// MARK: - Pill stand-in (preview only)
-
-/// Stand-in for the production `PillView`. The real one is wired to
-/// `PillViewModel` + AppCoordinator + audio-level streaming, which
-/// doesn't make sense to spin up just for a settings preview. This
-/// preview reads `PreferencesStore.accent` directly so the comet rim
-/// retints the moment the user picks a new colour.
-private struct PillPreview: View {
-    @EnvironmentObject private var prefs: PreferencesStore
-
-    var body: some View {
-        ZStack {
-            // Body
-            Capsule().fill(Color.black)
-
-            // Comet rim — angular gradient masked to an annulus.
-            TimelineView(.animation) { ctx in
-                let t = ctx.date.timeIntervalSinceReferenceDate
-                let phase = (t.truncatingRemainder(dividingBy: 4.4)) / 4.4 * 360.0
-                Capsule()
-                    .strokeBorder(
-                        AngularGradient(
-                            gradient: Gradient(stops: [
-                                .init(color: .clear,             location: 0.00),
-                                .init(color: .clear,             location: 0.30),
-                                .init(color: .white.opacity(0.6),location: 0.50),
-                                .init(color: prefs.accent,       location: 0.60),
-                                .init(color: prefs.accentSecondary, location: 0.70),
-                                .init(color: .clear,             location: 0.90),
-                                .init(color: .clear,             location: 1.00),
-                            ]),
-                            center: .center,
-                            angle: .degrees(phase)
-                        ),
-                        lineWidth: 1.4
-                    )
-            }
-
-            // Static rim
-            Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1)
-
-            // Inner glyphs (down-triangle + filled circle + waveform)
-            HStack(spacing: 7) {
-                Triangle()
-                    .fill(.white)
-                    .frame(width: 18, height: 14)
-                Circle().fill(.white).frame(width: 14, height: 14)
-                HStack(spacing: 3) {
-                    ForEach(0..<5) { i in
-                        Bar(delay: Double(i) * 0.08, peak: barEnvelope(i))
-                    }
-                }
-                .frame(height: 32)
-            }
-            .padding(.horizontal, 14)
-        }
-        .clipShape(Capsule())
-        .shadow(color: .black.opacity(0.50), radius: 16, x: 0, y: 16)
-        .shadow(color: .black.opacity(0.20), radius: 3,  x: 0, y: 2)
-    }
-
-    private func barEnvelope(_ i: Int) -> CGFloat {
-        let env: [CGFloat] = [0.42, 0.66, 0.92, 0.66, 0.42]
-        return env[i]
-    }
-}
-
-private struct Triangle: Shape {
-    func path(in r: CGRect) -> Path {
-        var p = Path()
-        p.move(to:    CGPoint(x: r.midX, y: r.maxY))
-        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
-        p.addLine(to: CGPoint(x: r.minX, y: r.minY))
-        p.closeSubpath()
-        return p
-    }
-}
-
-private struct Bar: View {
-    let delay: Double
-    let peak: CGFloat
-    @State private var t: CGFloat = 0.45
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 1)
-            .fill(LinearGradient(colors: [.white, Color(white: 0.86), Color(white: 0.55)],
-                                 startPoint: .top, endPoint: .bottom))
-            .frame(width: 3, height: 32 * t)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true).delay(delay)) {
-                    t = peak
-                }
-            }
-    }
-}
+// The pill preview is rendered by the production `PillView`
+// (CyphrWhispr/PillWindow/PillView.swift) — no separate stand-in lives
+// here any more. Visual changes only need to happen in `PillView` and
+// they automatically propagate to this preview.
