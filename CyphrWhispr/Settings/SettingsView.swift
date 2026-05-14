@@ -67,11 +67,17 @@ struct SettingsView: View {
     /// title to match the mockup; the system title is hidden so the strip
     /// stands alone.
     private var titleStrip: some View {
-        Text("CyphrWhispr  —  Settings")
-            .font(SettingsDesign.krBody(size: 11.5, weight: .medium))
+        Text("CyphrWhispr — Settings")
+            .font(SettingsDesign.krBody(size: 13, weight: .medium))
             .foregroundStyle(SettingsDesign.textSecondary)
             .frame(maxWidth: .infinity)
             .frame(height: Self.titleStripHeight)
+            // The window uses `.fullSizeContentView` so SwiftUI applies a
+            // top safe-area inset matching the 28pt title bar. Without
+            // ignoring it the title `Text` lands BELOW the traffic-light
+            // row instead of vertically centred next to it. The background
+            // `Color` already ignores the safe area for the same reason.
+            .ignoresSafeArea(edges: .top)
     }
 
     @ViewBuilder
