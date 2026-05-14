@@ -56,28 +56,14 @@ struct SettingsView: View {
         Tab(rawValue: selectedRaw) ?? .general
     }
 
-    /// Width reserved on each end of the titlebar HStack so the centred
-    /// title text sits optically centred between the AppKit traffic
-    /// lights (left) and the right window edge. ~70pt is the cluster
-    /// width of the three standard window buttons including their
-    /// trailing padding.
-    private static let trafficLightReserve: CGFloat = 70
-
-    /// Title-strip height in points. Matches the standard macOS title bar
-    /// so the centred text sits exactly in line with the AppKit traffic
-    /// lights overlay drawn by the window chrome.
-    private static let titleStripHeight: CGFloat = 28
-
     var body: some View {
-        ZStack(alignment: .top) {
+        ZStack {
             // 1. Backdrop gradient — must ignore safe area so the gradient
             //    reaches under the title bar.
             LinearGradient.cwBackdrop
                 .ignoresSafeArea()
 
-            // 2. Ambient accent glows behind the gradient. Animated implicitly
-            //    via the accent reading from PreferencesStore — when the user
-            //    picks a new accent, this softly retints.
+            // 2. Ambient accent glows behind the gradient.
             ZStack {
                 Circle().fill(prefs.accent.opacity(0.10))
                     .frame(width: 700, height: 700).blur(radius: 120)
@@ -89,41 +75,18 @@ struct SettingsView: View {
             .allowsHitTesting(false)
             .ignoresSafeArea()
 
-            // 3 + 4. Title strip + body in a VStack.
-            VStack(spacing: 0) {
-                titleStrip
-                bodyContent
-            }
+            // 3. Body content. The title strip is NO LONGER drawn here —
+            //    it lives in an `NSTitlebarAccessoryViewController` added
+            //    by `SettingsWindowController`. Body content respects the
+            //    natural top safe area (native 28pt title bar + 28pt
+            //    accessory = 56pt), so the sidebar and content start
+            //    below the strip automatically.
+            bodyContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .preferredColorScheme(.dark)
         .frame(minWidth: 880, idealWidth: 960, maxWidth: .infinity,
                minHeight: 600, idealHeight: 720, maxHeight: .infinity)
-    }
-
-    // MARK: - Title strip
-
-    /// 28pt strip at the very top of the window with `CyphrWhispr — Settings`
-    /// centred in Monaspace Krypton. The AppKit traffic lights overlay this
-    /// area from the window chrome; we leave a 70pt reserve on each side so
-    /// the centred text doesn't collide with them.
-    private var titleStrip: some View {
-        HStack(spacing: 0) {
-            Color.clear.frame(width: Self.trafficLightReserve)
-            Spacer()
-            Text("CyphrWhispr — Settings")
-                .font(CWFont.mono(size: CWFont.s12, weight: .medium))
-                .foregroundColor(.cwFg2)
-            Spacer()
-            Color.clear.frame(width: Self.trafficLightReserve)
-        }
-        .frame(height: Self.titleStripHeight)
-        .overlay(Rectangle().fill(Color.cwBorder).frame(height: 1), alignment: .bottom)
-        // The window uses `.fullSizeContentView` so SwiftUI applies a top
-        // safe-area inset matching the 28pt title bar. Without ignoring it
-        // the strip lands BELOW the traffic-light row instead of overlaying
-        // it. Backdrop gradient already ignores the safe area for the same
-        // reason.
-        .ignoresSafeArea(edges: .top)
     }
 
     // MARK: - Sidebar + content split
@@ -169,6 +132,26 @@ struct SettingsView: View {
         }
         .transition(.opacity)
         .id(selected)
+    }
+}
+
+// MARK: - Title strip
+//
+// Custom title strip drawn as an `NSTitlebarAccessoryViewController`'s
+// hosted view (see `SettingsWindowController`). It lives in the WINDOW
+// CHROME, not in SwiftUI's body — AppKit positions and sizes it, so it
+// can't be compressed during user-driven resize the way every SwiftUI
+// VStack/ZStack/GeometryReader iteration we tried eventually was.
+struct SettingsTitleStrip: View {
+    var body: some View {
+        Text("CyphrWhispr — Settings")
+            .font(CWFont.mono(size: CWFont.s12, weight: .medium))
+            .foregroundColor(.cwFg2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(
+                Rectangle().fill(Color.cwBorder).frame(height: 1),
+                alignment: .bottom
+            )
     }
 }
 
