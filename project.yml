@@ -74,6 +74,15 @@ targets:
         # rather than "Fonts/" because Xcode resource refs in this project
         # land flat in Contents/Resources/ regardless of source layout.
         ATSApplicationFontsPath: "."
+        # Custom URL scheme `cyphr-whispr://`. Used as a lightweight remote
+        # for the running app — `open cyphr-whispr://open-settings` opens
+        # the Settings window without the user clicking the menu bar icon.
+        # Primarily for developer / scripting workflows (UI screenshots,
+        # automation); also makes future deep-linking trivial.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.cyphr.whispr
+            CFBundleURLSchemes:
+              - cyphr-whispr
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: CyphrWhispr/Resources/CyphrWhispr.entitlements
