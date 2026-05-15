@@ -12,10 +12,10 @@ import SwiftUI
 ///      centred `CyphrWhispr — Settings` label, drawn as a layout-neutral
 ///      overlay across the native title-bar band. The AppKit traffic
 ///      lights float over its left end in their standard position.
-///   4. A horizontal split: glass sidebar on the left (220pt) with six
-///      fixed tabs (General · Shortcut · Models · History · Customization
-///      · About) plus a footer with version/build metadata; content panel
-///      on the right that dispatches into the corresponding tab view.
+///   4. A horizontal split: glass sidebar on the left (220pt) with seven
+///      fixed tabs (General · Shortcut · Models · Polish · History ·
+///      Customization · About) plus a footer with version/build metadata;
+///      content panel on the right that dispatches into the matching tab.
 ///
 /// The legacy retro-terminal look (chevron + pill sidebar, flat dark
 /// cards, `TerminalBadge` brackets) is being replaced tab-by-tab in
@@ -27,6 +27,7 @@ struct SettingsView: View {
         case general       = "General"
         case shortcut      = "Shortcut"
         case models        = "Models"
+        case polish        = "Polish"
         case history       = "History"
         case customization = "Customization"
         case about         = "About"
@@ -40,6 +41,7 @@ struct SettingsView: View {
             case .general:       return "⌘"
             case .shortcut:      return "⌥"
             case .models:        return "◇"
+            case .polish:        return "✦"
             case .history:       return "⌗"
             case .customization: return "◐"
             case .about:         return "∗"
@@ -143,6 +145,7 @@ struct SettingsView: View {
             case .general:       GeneralTabView()
             case .shortcut:      ShortcutTabView()
             case .models:        ModelsTabView()
+            case .polish:        PolishTabView()
             case .history:       HistoryTabView()
             case .customization: CustomizationTabView()
             case .about:         AboutTabView()
