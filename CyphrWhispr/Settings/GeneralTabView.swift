@@ -2,16 +2,15 @@ import SwiftUI
 import AppKit
 
 /// Settings → General. Daily-driver behaviour for the dictation pill.
-/// v2 glass redesign — three cards: Behaviour (launch-at-login + hide-
-/// menu-bar), Activation (mode + language + pill position), and Polish
-/// (Apple Intelligence cleanup toggle + customise sheet).
+/// v2 glass redesign — two cards: Behaviour (launch-at-login + hide-
+/// menu-bar) and Activation (mode + language + pill position).
 ///
-/// Two production-only rows the v2 reference doesn't show are preserved
-/// here: the dictation language dropdown (multilingual support) and the
-/// Polish row that opens the legacy PolishTabView in a sheet.
+/// One production-only row the v2 reference doesn't show is preserved
+/// here: the dictation language dropdown (multilingual support). The
+/// Polish / Apple Intelligence cleanup feature has its own sidebar tab
+/// (`PolishTabView`).
 struct GeneralTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
-    @State private var showPolishSheet = false
 
     var body: some View {
         ScrollView {
@@ -23,16 +22,11 @@ struct GeneralTabView: View {
 
                 behaviourCard
                 activationCard
-                polishCard
             }
             .padding(.horizontal, 30)
             .padding(.top, 26)
             .padding(.bottom, 36)
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .sheet(isPresented: $showPolishSheet) {
-            PolishPromptSheet()
-                .environmentObject(prefs)
         }
     }
 
@@ -78,29 +72,6 @@ struct GeneralTabView: View {
                 Text("centred · 80 pt from bottom")
                     .font(CWFont.mono(size: CWFont.s12, weight: .regular))
                     .foregroundColor(.cwFg2)
-            }
-        }
-    }
-
-    // MARK: - Polish card
-
-    private var polishCard: some View {
-        Card3(title: "Polish", meta: "Apple Intelligence") {
-            Row3(label: "Polish (Apple Intelligence)",
-                 sub: "Clean up filler words and punctuation on-device after each dictation.",
-                 isLast: !prefs.polishEnabled) {
-                Toggle3(isOn: $prefs.polishEnabled)
-            }
-            if prefs.polishEnabled {
-                Row3(label: "Cleanup instructions",
-                     sub: "Edit the prompt sent to the on-device language model.",
-                     isLast: true) {
-                    CWButton(title: "Customise…",
-                             variant: .ghost,
-                             indicator: .glyph("›")) {
-                        showPolishSheet = true
-                    }
-                }
             }
         }
     }
@@ -202,38 +173,3 @@ struct GeneralTabView: View {
     }
 }
 
-// MARK: - Polish prompt sheet
-
-/// Modal sheet that hosts the full Polish prompt editor. Reachable from
-/// the Polish row in General when Polish is enabled. PolishTabView itself
-/// still uses the legacy components — that's a separate migration.
-private struct PolishPromptSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var prefs: PreferencesStore
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Polish — Cleanup instructions")
-                    .font(SettingsDesign.krTitle(size: 16))
-                    .foregroundStyle(SettingsDesign.textPrimary)
-                Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(NativeMacButtonStyle())
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 24)
-            .padding(.bottom, 16)
-
-            Divider().overlay(SettingsDesign.divider)
-
-            PolishTabView()
-                .environmentObject(prefs)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
-        }
-        .frame(width: 720, height: 600)
-        .background(SettingsDesign.pageBackground)
-        .preferredColorScheme(.dark)
-    }
-}
