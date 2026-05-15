@@ -1,5 +1,8 @@
 # Xcode
 build/
+# the iCloud .nosync symlink (build -> build.nosync); the rule above
+# only matches a real directory, so the symlink needs its own line.
+build
 DerivedData/
 *.xcodeproj/
 *.xcworkspace/
@@ -26,11 +29,21 @@ models/
 *.gguf
 *.bin
 
-# AI assistant scratch + planning notes (local-only)
+# AI assistant scratch, working notes, and project memory (local-only).
+# This repo is a public FOSS project. The operator's working context —
+# AI instructions and the memory/ folder (which carries identity notes
+# tied to the operator's real name) — is deliberately kept off GitHub.
 .claude/
 .superpowers/
+CLAUDE.md
+memory/
 
-# User-only design source artefacts (mockup ZIPs, working files).
+# User-only design source artefacts (mockup ZIPs, working files, decks).
 # The canonical mockups that ship with the repo live under
 # docs/superpowers/specs/assets/ — this folder is the import drop zone.
 Visual Aides/
+*.zip
+CyphrWhispr BIP Deck.html
+
+# iCloud-excluded dependency dirs
+*.nosync
