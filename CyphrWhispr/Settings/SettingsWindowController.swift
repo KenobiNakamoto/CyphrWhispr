@@ -73,28 +73,20 @@ final class SettingsWindowController {
             }
         }
 
-        // Custom title strip lives in the WINDOW CHROME, not in SwiftUI
-        // content. After several rounds of SwiftUI-only fixes failed to
-        // keep the title visible during user-driven vertical compression
-        // (every layout we tried — VStack, GeometryReader, ZStack
-        // overlay with `.fixedSize` — eventually collapsed the strip
-        // toward zero past some height threshold), we moved it to an
-        // `NSTitlebarAccessoryViewController`. The accessory is positioned
-        // and sized by AppKit, completely outside SwiftUI's layout
-        // system, so nothing SwiftUI does during a drag can compress it.
+        // The centred "CyphrWhispr — Settings" title is drawn by SwiftUI
+        // (`SettingsView`) as a fixed-height overlay inside the standard
+        // title-bar band — the traffic lights float over its left end.
+        // It is NOT a titlebar accessory: an accessory always adds a
+        // SECOND band below the native title bar, doubling the chrome
+        // height. The overlay keeps the top bar at the standard ~28pt.
         //
-        // Trade-off: instead of overlapping the traffic-light row in a
-        // single 28pt band, the title now sits in its own 28pt band
-        // below the native title bar — the top area is 56pt total.
-        let titleHost = NSHostingController(
-            rootView: SettingsTitleStrip()
-        )
-        titleHost.view.frame = NSRect(x: 0, y: 0, width: 0, height: 28)
-        let accessory = NSTitlebarAccessoryViewController()
-        accessory.view = titleHost.view
-        accessory.layoutAttribute = .bottom
-        accessory.fullScreenMinHeight = 28
-        window.addTitlebarAccessoryViewController(accessory)
+        // The earlier accessory detour existed because every SwiftUI
+        // title strip kept collapsing during user-driven resize. That
+        // collapse had a real root cause — the strip competed for
+        // vertical space inside a ZStack whose siblings called
+        // `.ignoresSafeArea()`, which defeats SwiftUI's safe-area layout.
+        // With the strip moved to a layout-neutral `.overlay` carrying a
+        // rigid `.frame(height:)`, it can no longer be compressed.
 
         self.window = window
         NSApp.activate(ignoringOtherApps: true)
