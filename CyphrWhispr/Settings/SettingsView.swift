@@ -8,10 +8,10 @@ import SwiftUI
 ///   2. Two large blurred accent glows behind the gradient (one in the
 ///      user's accent, one in `cwAccentSecondary`) for a subtle ambient
 ///      lift — the design's signature "the room is lit by the app" feel.
-///   3. A 38pt title strip with the centred `CyphrWhispr — Settings`
-///      label. The AppKit traffic lights stay on the left in their
-///      standard position — we leave a `Color.clear` spacer the same
-///      width on the right so the centred title stays optically centred.
+///   3. A 28pt title strip (standard macOS title-bar height) with the
+///      centred `CyphrWhispr — Settings` label, drawn as a layout-neutral
+///      overlay across the native title-bar band. The AppKit traffic
+///      lights float over its left end in their standard position.
 ///   4. A horizontal split: glass sidebar on the left (220pt) with six
 ///      fixed tabs (General · Shortcut · Models · History · Customization
 ///      · About) plus a footer with version/build metadata; content panel
@@ -56,37 +56,55 @@ struct SettingsView: View {
         Tab(rawValue: selectedRaw) ?? .general
     }
 
+    /// Standard macOS title-bar height. The window has no separate title
+    /// strip band any more — the title overlays this one native band.
+    static let titleBarHeight: CGFloat = 28
+
     var body: some View {
-        ZStack {
-            // 1. Backdrop gradient — must ignore safe area so the gradient
-            //    reaches under the title bar.
-            LinearGradient.cwBackdrop
-                .ignoresSafeArea()
-
-            // 2. Ambient accent glows behind the gradient.
-            ZStack {
-                Circle().fill(prefs.accent.opacity(0.10))
-                    .frame(width: 700, height: 700).blur(radius: 120)
-                    .offset(x: 200, y: -180)
-                Circle().fill(Color.cwAccentSecondary.opacity(0.06))
-                    .frame(width: 500, height: 500).blur(radius: 100)
-                    .offset(x: -240, y: 220)
+        // `bodyContent` is the PRIMARY view so it inherits the window's
+        // top safe-area inset (the native 28pt title bar) — the sidebar
+        // and content panel start cleanly below the chrome, and the
+        // sidebar footer stays on screen.
+        //
+        // The backdrop and the title strip must NOT be siblings in a
+        // ZStack with `bodyContent`: a ZStack sibling that calls
+        // `.ignoresSafeArea()` expands the whole ZStack to the full
+        // window, destroying the safe-area boundary for every other
+        // child — `bodyContent` would then greedily fill the full window
+        // and slide up under the title bar. `.background` and `.overlay`
+        // are layout-neutral, so they carry the safe-area-ignoring layers
+        // (gradient, title strip) without disturbing `bodyContent`.
+        bodyContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .top) {
+                // Centred mono title in the standard title-bar band. A
+                // rigid `.frame(height:)` inside a layout-neutral overlay
+                // cannot be compressed during window resize — the failure
+                // mode that drove (and is no longer served by) the old
+                // NSTitlebarAccessoryViewController detour.
+                SettingsTitleStrip()
+                    .frame(height: Self.titleBarHeight)
+                    .ignoresSafeArea(edges: .top)
             }
-            .allowsHitTesting(false)
-            .ignoresSafeArea()
+            .background {
+                ZStack {
+                    // 1. Backdrop gradient.
+                    LinearGradient.cwBackdrop
 
-            // 3. Body content. The title strip is NO LONGER drawn here —
-            //    it lives in an `NSTitlebarAccessoryViewController` added
-            //    by `SettingsWindowController`. Body content respects the
-            //    natural top safe area (native 28pt title bar + 28pt
-            //    accessory = 56pt), so the sidebar and content start
-            //    below the strip automatically.
-            bodyContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .preferredColorScheme(.dark)
-        .frame(minWidth: 880, idealWidth: 960, maxWidth: .infinity,
-               minHeight: 600, idealHeight: 720, maxHeight: .infinity)
+                    // 2. Ambient accent glows behind the gradient.
+                    Circle().fill(prefs.accent.opacity(0.10))
+                        .frame(width: 700, height: 700).blur(radius: 120)
+                        .offset(x: 200, y: -180)
+                    Circle().fill(Color.cwAccentSecondary.opacity(0.06))
+                        .frame(width: 500, height: 500).blur(radius: 100)
+                        .offset(x: -240, y: 220)
+                }
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
+            }
+            .preferredColorScheme(.dark)
+            .frame(minWidth: 880, idealWidth: 960, maxWidth: .infinity,
+                   minHeight: 600, idealHeight: 720, maxHeight: .infinity)
     }
 
     // MARK: - Sidebar + content split
@@ -137,11 +155,10 @@ struct SettingsView: View {
 
 // MARK: - Title strip
 //
-// Custom title strip drawn as an `NSTitlebarAccessoryViewController`'s
-// hosted view (see `SettingsWindowController`). It lives in the WINDOW
-// CHROME, not in SwiftUI's body — AppKit positions and sizes it, so it
-// can't be compressed during user-driven resize the way every SwiftUI
-// VStack/ZStack/GeometryReader iteration we tried eventually was.
+// Centred `CyphrWhispr — Settings` label with a bottom hairline. Drawn
+// by `SettingsView` as a fixed-height `.overlay` across the native
+// title-bar band (see the body comment for why an overlay, not a ZStack
+// sibling or a titlebar accessory).
 struct SettingsTitleStrip: View {
     var body: some View {
         Text("CyphrWhispr — Settings")
