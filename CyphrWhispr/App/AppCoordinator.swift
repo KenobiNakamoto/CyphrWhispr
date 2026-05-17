@@ -89,14 +89,19 @@ final class AppCoordinator {
     /// promotes the install path from `.spawning` → `.streaming`.
     private var installOutroDone: Bool = false
     /// True once the install animation has run to completion at least
-    /// once in this app session (i.e. outro fired). The first hotkey
-    /// press of a session always uses the install path regardless of
-    /// warm-up state — that's the canonical "app start" choreography.
-    /// Subsequent presses fall through to the cinematic spawn (or no
-    /// animation, depending on PillWindowController.show()'s session
-    /// memory). Resets on model switch so a new model gets its install
-    /// animation again.
-    private var hasPlayedSessionFirstPress: Bool = false
+    /// once in this app's LIFETIME. Backed by UserDefaults so the flag
+    /// survives quit / relaunch. The first hotkey press on the very
+    /// first run of the app plays the cinematic install animation
+    /// (intro → compile rim → outro); every subsequent press — across
+    /// the same session AND across future launches — skips animation
+    /// entirely and the pill just pops up in its `.armed` state.
+    ///
+    /// Reset by deleting the UserDefaults key:
+    ///   defaults delete com.cyphr.whispr cw.hasShownFirstInstallEver
+    private var hasShownFirstInstallEver: Bool {
+        get { UserDefaults.standard.bool(forKey: "cw.hasShownFirstInstallEver") }
+        set { UserDefaults.standard.set(newValue, forKey: "cw.hasShownFirstInstallEver") }
+    }
     /// Drives `pill.setInstallProgress(_:)` from the install intro
     /// completion until either (a) warm-up resolves and we snap to 1.0
     /// and play the outro, or (b) 30 s passes and the rim sits visually
@@ -198,14 +203,17 @@ final class AppCoordinator {
         // this when we're still in `.spawning` (early hotkey release would
         // have already moved us past .spawning, in which case the outro
         // we triggered before the user gave up should just no-op here).
-        // Mark `hasPlayedSessionFirstPress` here so the install animation
-        // is treated as "done" only once we've actually finished it; if
-        // the user cancels mid-spawn, the next press still plays it.
+        // Mark `hasShownFirstInstallEver` here so the install animation
+        // is recorded as "played" only once we've actually finished it;
+        // if the user cancels mid-spawn the flag stays unset so the
+        // next launch still gets the animation. Persisting via
+        // UserDefaults means this flips exactly once in the app's
+        // entire lifetime.
         pill.onInstallOutroComplete = { [weak self] in
             guard let self else { return }
             guard self.installPathActive else { return }
             self.installOutroDone = true
-            self.hasPlayedSessionFirstPress = true
+            self.hasShownFirstInstallEver = true
             self.maybeBeginStreaming()
         }
 
@@ -295,9 +303,11 @@ final class AppCoordinator {
             audio.stop()
             endSession(restoreClipboard: true)
         }
-        // New model = new compile potentially required = let the install
-        // animation play again on the next first-press.
-        hasPlayedSessionFirstPress = false
+        // No animation replay on model switch — `hasShownFirstInstallEver`
+        // is a lifetime flag, set exactly once on first install.
+        // The user explicitly requested "only on first ever start";
+        // subsequent model switches load silently with just the menubar
+        // icon as feedback.
         state = .loadingModel
         modelSwitchTask = Task { [weak self] in
             guard let self else { return }
@@ -334,18 +344,16 @@ final class AppCoordinator {
             return
         }
 
-        // The install animation is the canonical "app first start"
-        // choreography — it plays on the first hotkey press of every
-        // session, regardless of whether warm-up is still in flight.
-        // The rim sweep adapts: if warm-up is fast (cached model), we
-        // do a quick 1s sweep so the compile phase still reads as
-        // deliberate; if it's slow (fresh model, first compile),
-        // the full 30s sweep with real progress applies.
-        // Subsequent presses in the same session fall through to
-        // `pill.show()` (cinematic spawn / no animation).
-        // Decision is frozen for the press via `installPathActive` —
-        // flipping mid-session would confuse the pill choreography.
-        let useInstallPath = (state == .loadingModel) || !hasPlayedSessionFirstPress
+        // The install animation is the canonical "first-ever app launch"
+        // choreography. It plays exactly ONCE in the app's lifetime —
+        // the very first hotkey press on a fresh install when no
+        // `cw.hasShownFirstInstallEver` flag exists in UserDefaults.
+        // Every subsequent press (later in the same session, in later
+        // sessions, across model switches, etc.) skips animation
+        // entirely: `pill.show()` is called and the pill pops up in
+        // its final `.armed` state with just a 0.18s alpha fade.
+        // Decision is frozen for the press via `installPathActive`.
+        let useInstallPath = !hasShownFirstInstallEver
         installPathActive = useInstallPath
 
         // Enter spawning state — audio capture starts immediately and

@@ -73,6 +73,21 @@ final class SettingsWindowController {
             }
         }
 
+        // The centred "CyphrWhispr — Settings" title is drawn by SwiftUI
+        // (`SettingsView`) as a fixed-height overlay inside the standard
+        // title-bar band — the traffic lights float over its left end.
+        // It is NOT a titlebar accessory: an accessory always adds a
+        // SECOND band below the native title bar, doubling the chrome
+        // height. The overlay keeps the top bar at the standard ~28pt.
+        //
+        // The earlier accessory detour existed because every SwiftUI
+        // title strip kept collapsing during user-driven resize. That
+        // collapse had a real root cause — the strip competed for
+        // vertical space inside a ZStack whose siblings called
+        // `.ignoresSafeArea()`, which defeats SwiftUI's safe-area layout.
+        // With the strip moved to a layout-neutral `.overlay` carrying a
+        // rigid `.frame(height:)`, it can no longer be compressed.
+
         self.window = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
