@@ -27,6 +27,10 @@ final class PreferencesStore: ObservableObject {
         static let hideMenuBarIcon = "General.hideMenuBarIcon"
         static let activationMode = "General.activationMode"
         static let inhibitWhileTyping = "Shortcut.inhibitWhileTyping"
+        // History tab — retention policy.
+        static let historyRetention = "History.retention"
+        static let historyRetentionDays = "History.retentionDays"
+        static let historyRetentionEntryLimit = "History.retentionEntryLimit"
     }
 
     /// How the hotkey turns dictation on and off. **Push-to-talk** (default)
@@ -46,6 +50,31 @@ final class PreferencesStore: ObservableObject {
             }
         }
     }
+
+    /// How long transcription history is kept. `.forever` keeps every
+    /// entry; `.days` prunes anything older than `historyRetentionDays`;
+    /// `.entries` keeps only the most recent `historyRetentionEntryLimit`.
+    /// Persisted now and surfaced in Settings → History; the actual
+    /// pruning runs once the Phase 4 encrypted `HistoryStore` ships.
+    enum HistoryRetention: String, CaseIterable, Identifiable, Codable {
+        case forever = "forever"
+        case days    = "days"
+        case entries = "entries"
+        var id: String { rawValue }
+        /// Short label for the segmented control in Settings → History.
+        var label: String {
+            switch self {
+            case .forever: return "Forever"
+            case .days:    return "By age"
+            case .entries: return "By count"
+            }
+        }
+    }
+
+    /// Day-count choices offered when retention is `.days`.
+    static let historyRetentionDayChoices = [7, 14, 30, 60, 90, 180]
+    /// Entry-count choices offered when retention is `.entries`.
+    static let historyRetentionEntryChoices = [50, 100, 250, 500, 1000]
 
     /// The original brand violet — what the app ships with and what the
     /// "Reset" button restores to. Color literal keeps tests + previews from
@@ -202,6 +231,38 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
+    // MARK: - History retention
+    //
+    // Persisted now; enforced when the Phase 4 encrypted `HistoryStore`
+    // ships. `.forever` is the default — we never silently drop a user's
+    // data without them choosing a pruning policy first. The day / entry
+    // values are kept independently so switching policy back and forth
+    // doesn't lose the other axis's setting.
+
+    /// Active retention policy: keep forever, prune by age, or prune by count.
+    @Published var historyRetention: HistoryRetention {
+        didSet {
+            guard historyRetention != oldValue else { return }
+            UserDefaults.standard.set(historyRetention.rawValue, forKey: Key.historyRetention)
+        }
+    }
+
+    /// Age cap (in days) used when `historyRetention == .days`.
+    @Published var historyRetentionDays: Int {
+        didSet {
+            guard historyRetentionDays != oldValue else { return }
+            UserDefaults.standard.set(historyRetentionDays, forKey: Key.historyRetentionDays)
+        }
+    }
+
+    /// Entry cap used when `historyRetention == .entries`.
+    @Published var historyRetentionEntryLimit: Int {
+        didSet {
+            guard historyRetentionEntryLimit != oldValue else { return }
+            UserDefaults.standard.set(historyRetentionEntryLimit, forKey: Key.historyRetentionEntryLimit)
+        }
+    }
+
     private init() {
         let defaults = UserDefaults.standard
         let storedModel = defaults.string(forKey: Key.activeModelID)
@@ -268,6 +329,21 @@ final class PreferencesStore: ObservableObject {
         } else {
             self.inhibitWhileTyping = defaults.bool(forKey: Key.inhibitWhileTyping)
         }
+
+        // History retention defaults: keep everything. Pruning is opt-in.
+        // The day / entry caps carry sensible mid-range defaults so the
+        // dropdowns aren't empty the first time a policy is selected
+        // (`integer(forKey:)` returns 0 when the key is absent).
+        if let retentionRaw = defaults.string(forKey: Key.historyRetention),
+           let retention = HistoryRetention(rawValue: retentionRaw) {
+            self.historyRetention = retention
+        } else {
+            self.historyRetention = .forever
+        }
+        let storedDays = defaults.integer(forKey: Key.historyRetentionDays)
+        self.historyRetentionDays = storedDays == 0 ? 30 : storedDays
+        let storedLimit = defaults.integer(forKey: Key.historyRetentionEntryLimit)
+        self.historyRetentionEntryLimit = storedLimit == 0 ? 100 : storedLimit
     }
 
     /// Mark first-run as done; called once the user has accepted (or changed
