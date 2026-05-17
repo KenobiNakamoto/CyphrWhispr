@@ -6,12 +6,16 @@ import SwiftUI
 /// the user knows what the feature will look like — and so the visual
 /// structure is in place to drop the real store into.
 ///
-/// v2 glass redesign — single `Card3` titled "Today" with four demo
-/// entries, two action buttons in a footer row below. The encrypted vault
-/// + clear-history actions are stubs; they ship with the real store in
-/// v0.5.
+/// v2 glass redesign — a `Card3` titled "Today" with four demo entries, a
+/// "Retention" card with the pruning policy, then two action buttons in a
+/// footer row. The retention *preference* is real and persists today; the
+/// encrypted vault, the clear-history wipe, and the actual pruning are
+/// stubs that ship with the real store in v0.5.
 struct HistoryTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
+
+    /// Drives the destructive "clear all" confirmation dialog.
+    @State private var showClearConfirm = false
 
     var body: some View {
         ScrollView {
@@ -31,6 +35,8 @@ struct HistoryTabView: View {
                     }
                 }
 
+                retentionCard
+
                 HStack(spacing: 10) {
                     CWButton(title: "Reveal vault in Finder",
                              variant: .ghost,
@@ -40,7 +46,7 @@ struct HistoryTabView: View {
                     CWButton(title: "Clear history",
                              variant: .danger,
                              indicator: .glyph("⌫")) {
-                        // Stub — confirmation sheet + wipe land alongside the store.
+                        showClearConfirm = true
                     }
                 }
                 .padding(.top, 4)
@@ -50,6 +56,115 @@ struct HistoryTabView: View {
             .padding(.bottom, 36)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .confirmationDialog("Delete all transcription history?",
+                            isPresented: $showClearConfirm,
+                            titleVisibility: .visible) {
+            Button("Delete all history", role: .destructive) {
+                // TODO(v0.5): wipe the encrypted HistoryStore here. The
+                // confirmation UX is wired now so only the store call is
+                // left to add.
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes every saved transcription. It cannot be undone.")
+        }
+    }
+
+    // MARK: - Retention card
+
+    /// Pruning policy for the transcription history. Three policies — keep
+    /// everything, cap by age, or cap by count — mirroring the spec in
+    /// `docs/strategy`. The control writes straight to `PreferencesStore`;
+    /// the encrypted store reads these values to prune once it ships.
+    private var retentionCard: some View {
+        Card3(title: "Retention", meta: retentionSummary) {
+            Row3(label: "Keep transcriptions",
+                 sub: "How long dictation history is kept. Takes effect when the encrypted store ships in v0.5.",
+                 isLast: prefs.historyRetention == .forever) {
+                Segmented3(
+                    value: $prefs.historyRetention,
+                    options: PreferencesStore.HistoryRetention.allCases.map {
+                        ($0, $0.label)
+                    }
+                )
+            }
+
+            switch prefs.historyRetention {
+            case .forever:
+                EmptyView()
+            case .days:
+                Row3(label: "Delete after",
+                     sub: "Entries older than this are removed automatically.",
+                     isLast: true) {
+                    numberMenu(value: $prefs.historyRetentionDays,
+                               options: PreferencesStore.historyRetentionDayChoices) {
+                        "\($0) days"
+                    }
+                }
+            case .entries:
+                Row3(label: "Keep most recent",
+                     sub: "Older entries drop off as new dictations arrive.",
+                     isLast: true) {
+                    numberMenu(value: $prefs.historyRetentionEntryLimit,
+                               options: PreferencesStore.historyRetentionEntryChoices) {
+                        "\($0) entries"
+                    }
+                }
+            }
+        }
+        .animation(.cwMain, value: prefs.historyRetention)
+    }
+
+    /// Card-header summary of the active policy, e.g. "30-DAY LIMIT".
+    private var retentionSummary: String {
+        switch prefs.historyRetention {
+        case .forever: return "keep forever"
+        case .days:    return "\(prefs.historyRetentionDays)-day limit"
+        case .entries: return "last \(prefs.historyRetentionEntryLimit)"
+        }
+    }
+
+    /// Styled dropdown for a fixed set of integer choices — same visual
+    /// language as the dictation-language menu on the General tab.
+    private func numberMenu(value: Binding<Int>,
+                            options: [Int],
+                            format: @escaping (Int) -> String) -> some View {
+        Menu {
+            ForEach(options, id: \.self) { opt in
+                Button {
+                    value.wrappedValue = opt
+                } label: {
+                    HStack {
+                        Text(format(opt))
+                        if value.wrappedValue == opt {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(format(value.wrappedValue))
+                    .font(CWFont.mono(size: CWFont.s12, weight: .medium))
+                    .foregroundColor(.cwFg1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.cwFg2)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(Color.cwBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
     }
 
     /// Stand-in entries shown before the real store is wired. Picked to
