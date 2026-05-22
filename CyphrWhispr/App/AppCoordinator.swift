@@ -151,6 +151,13 @@ final class AppCoordinator {
     /// Only mutated on `typingQueue`.
     private var sessionClipboard: PasteboardSnapshot?
 
+    /// Localized name of the app that was frontmost when the hotkey was
+    /// pressed — recorded alongside the transcript in the history vault.
+    /// Captured at press time (before the pill appears) because the pill is a
+    /// non-activating panel; resolving it later would still be correct, but
+    /// press time is unambiguous. Nil if no app is frontmost.
+    private var sessionSourceApp: String?
+
     func start() {
         statusItem.install()
         statusItem.onQuit = { NSApp.terminate(nil) }
@@ -240,6 +247,10 @@ final class AppCoordinator {
         // Prompt for Accessibility on first launch so the user isn't surprised
         // when paste injection fails.
         _ = ClipboardPasteInjector.ensureAccessibilityTrusted(prompt: true)
+
+        // Reopen the encrypted history vault if the user left history on in a
+        // previous session. No-op (and no Keychain access) when it's off.
+        HistoryService.shared.bootstrap()
 
         // Re-warm whenever the user picks a different model in Settings.
         // .dropFirst skips the initial value (already used in the WhisperKitBackend init).
@@ -355,6 +366,11 @@ final class AppCoordinator {
         // Decision is frozen for the press via `installPathActive`.
         let useInstallPath = !hasShownFirstInstallEver
         installPathActive = useInstallPath
+
+        // Remember which app the user is dictating into, for the history
+        // entry. Captured now, before the pill shows, so a later focus
+        // change can't mislabel the entry.
+        sessionSourceApp = NSWorkspace.shared.frontmostApplication?.localizedName
 
         // Enter spawning state — audio capture starts immediately and
         // samples buffer locally. `state` stays `.spawning` regardless of
@@ -677,6 +693,12 @@ final class AppCoordinator {
         streamConsumer = nil
 
         let cleaned = TranscriptSanitizer.clean(text)
+
+        // Record the finished dictation into the encrypted history vault.
+        // Best-effort and opt-in: `record` no-ops when history is disabled
+        // and never throws back into the paste path.
+        HistoryService.shared.record(text: cleaned, sourceApp: sessionSourceApp)
+
         typingQueue.async { [weak self] in
             guard let self else { return }
             // committingFinal: true → final delta is keystroke-typed, not
