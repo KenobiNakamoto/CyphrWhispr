@@ -8,10 +8,11 @@ import SwiftUI
 ///   2. Two large blurred accent glows behind the gradient (one in the
 ///      user's accent, one in `cwAccentSecondary`) for a subtle ambient
 ///      lift — the design's signature "the room is lit by the app" feel.
-///   3. A 28pt title strip (standard macOS title-bar height) with the
+///   3. A 31pt opaque title strip — a few points taller than the native
+///      title-bar band so it doesn't read as a thin sliver — carrying the
 ///      centred `CyphrWhispr — Settings` label, drawn as a layout-neutral
-///      overlay across the native title-bar band. The AppKit traffic
-///      lights float over its left end in their standard position.
+///      overlay. The AppKit traffic lights float over its left end in
+///      their standard position.
 ///   4. A horizontal split: glass sidebar on the left (220pt) with seven
 ///      fixed tabs (General · Shortcut · Models · Polish · History ·
 ///      Customization · About) plus a footer with version/build metadata;
@@ -58,9 +59,15 @@ struct SettingsView: View {
         Tab(rawValue: selectedRaw) ?? .general
     }
 
-    /// Standard macOS title-bar height. The window has no separate title
-    /// strip band any more — the title overlays this one native band.
-    static let titleBarHeight: CGFloat = 28
+    /// Native macOS title-bar height — the window's top safe-area inset, and
+    /// where the traffic lights sit. `bodyContent` starts below this band.
+    static let nativeTitleBarHeight: CGFloat = 28
+
+    /// Height of the title strip actually drawn. A few points taller than the
+    /// native band so the bar doesn't read as a thin sliver; the overhang
+    /// (`titleBarHeight - nativeTitleBarHeight`) extends below the native band
+    /// and `bodyContent` is nudged down by the same amount to clear it.
+    static let titleBarHeight: CGFloat = 31
 
     var body: some View {
         // `bodyContent` is the PRIMARY view so it inherits the window's
@@ -77,6 +84,10 @@ struct SettingsView: View {
         // are layout-neutral, so they carry the safe-area-ignoring layers
         // (gradient, title strip) without disturbing `bodyContent`.
         bodyContent
+            // The drawn title strip is a few points taller than the native
+            // title-bar band; nudge content down by that overhang so nothing
+            // renders behind the strip's opaque lower edge.
+            .padding(.top, Self.titleBarHeight - Self.nativeTitleBarHeight)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .top) {
                 // Centred mono title in the standard title-bar band. A
@@ -158,16 +169,21 @@ struct SettingsView: View {
 
 // MARK: - Title strip
 //
-// Centred `CyphrWhispr — Settings` label with a bottom hairline. Drawn
-// by `SettingsView` as a fixed-height `.overlay` across the native
-// title-bar band (see the body comment for why an overlay, not a ZStack
-// sibling or a titlebar accessory).
+// Centred `CyphrWhispr — Settings` label on an opaque fill with a bottom
+// hairline. Drawn by `SettingsView` as a fixed-height `.overlay` across
+// the title-bar band (see the body comment for why an overlay, not a
+// ZStack sibling or a titlebar accessory). The opaque fill is what keeps
+// scrolled content from showing through the title and the traffic lights.
 struct SettingsTitleStrip: View {
     var body: some View {
         Text("CyphrWhispr — Settings")
             .font(CWFont.mono(size: CWFont.s12, weight: .medium))
             .foregroundColor(.cwFg2)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Opaque backing — `cwBgTop` is the backdrop gradient's top stop,
+            // so the strip matches the window's top edge rather than reading
+            // as a separate slab pasted over the gradient.
+            .background(Color.cwBgTop)
             .overlay(
                 Rectangle().fill(Color.cwBorder).frame(height: 1),
                 alignment: .bottom
