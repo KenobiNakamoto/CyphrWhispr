@@ -27,7 +27,8 @@ final class PreferencesStore: ObservableObject {
         static let hideMenuBarIcon = "General.hideMenuBarIcon"
         static let activationMode = "General.activationMode"
         static let inhibitWhileTyping = "Shortcut.inhibitWhileTyping"
-        // History tab — retention policy.
+        // History tab — opt-in switch + retention policy.
+        static let historyEnabled = "History.enabled"
         static let historyRetention = "History.retention"
         static let historyRetentionDays = "History.retentionDays"
         static let historyRetentionEntryLimit = "History.retentionEntryLimit"
@@ -231,13 +232,23 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
-    // MARK: - History retention
+    // MARK: - History
     //
-    // Persisted now; enforced when the Phase 4 encrypted `HistoryStore`
-    // ships. `.forever` is the default — we never silently drop a user's
+    // `.forever` is the default retention — we never silently drop a user's
     // data without them choosing a pruning policy first. The day / entry
     // values are kept independently so switching policy back and forth
     // doesn't lose the other axis's setting.
+
+    /// Master switch for the encrypted transcription history. Off by default
+    /// — recording dictation is strictly opt-in. `HistoryService` owns the
+    /// open/close flow; this flag is the persisted record of the user's
+    /// choice and what the History tab's toggle reflects.
+    @Published var historyEnabled: Bool {
+        didSet {
+            guard historyEnabled != oldValue else { return }
+            UserDefaults.standard.set(historyEnabled, forKey: Key.historyEnabled)
+        }
+    }
 
     /// Active retention policy: keep forever, prune by age, or prune by count.
     @Published var historyRetention: HistoryRetention {
@@ -330,10 +341,11 @@ final class PreferencesStore: ObservableObject {
             self.inhibitWhileTyping = defaults.bool(forKey: Key.inhibitWhileTyping)
         }
 
-        // History retention defaults: keep everything. Pruning is opt-in.
+        // History defaults: recording OFF (opt-in), retention keep-everything.
         // The day / entry caps carry sensible mid-range defaults so the
         // dropdowns aren't empty the first time a policy is selected
         // (`integer(forKey:)` returns 0 when the key is absent).
+        self.historyEnabled = defaults.bool(forKey: Key.historyEnabled)
         if let retentionRaw = defaults.string(forKey: Key.historyRetention),
            let retention = HistoryRetention(rawValue: retentionRaw) {
             self.historyRetention = retention
@@ -400,8 +412,9 @@ final class PreferencesStore: ObservableObject {
     }
 
     /// User clicks "Customise prompt": flip into customised mode. Seeds the
-    /// editable text with whatever they were just looking at (the default)
-    /// so they can edit-in-place rather than starting from blank.
+    /// editable text with the default prompt so they edit-in-place rather
+    /// than starting from a blank box. The Polish tab edits a draft copy of
+    /// this and only writes it back through `savePolishPrompt(_:)`.
     func enablePolishCustomPrompt() {
         if !polishPromptIsCustomised {
             polishCustomPrompt = CleanupPrompt.defaultPrompt
@@ -409,13 +422,31 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
-    /// User clicks "Reset to default": flip out of customised mode. We DON'T
-    /// wipe `polishCustomPrompt` — keeping the previous edits means clicking
-    /// Customise again restores the user's last version rather than the
-    /// pristine default. (If they want to start over, the editable textarea
-    /// has a "Restore default text" affordance.)
+    /// User clicks "Default" in the prompt editor: stop using a custom prompt
+    /// and fall back to the read-only default. We DON'T wipe
+    /// `polishCustomPrompt`; it's harmless to keep, and re-entering customised
+    /// mode reseeds it from the default anyway.
     func resetPolishPrompt() {
         polishPromptIsCustomised = false
+    }
+
+    /// User clicks "Save" in the prompt editor: commit the edited draft as
+    /// the prompt dictation will use from now on.
+    ///
+    /// If the edited text is the default prompt verbatim (whitespace aside),
+    /// drop back to read-only default mode instead of storing a "custom"
+    /// prompt that merely duplicates the default — that keeps the Polish
+    /// card's default/customised label honest.
+    func savePolishPrompt(_ edited: String) {
+        let normalise: (String) -> String = {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if normalise(edited) == normalise(CleanupPrompt.defaultPrompt) {
+            polishPromptIsCustomised = false
+        } else {
+            polishCustomPrompt = edited
+            polishPromptIsCustomised = true
+        }
     }
 }
 

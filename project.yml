@@ -33,6 +33,14 @@ packages:
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit
     from: "0.9.0"
+  # Zetetic's official SQLCipher Swift package — a binary xcframework, so no
+  # in-tree C compilation. Backs the Phase 4 encrypted transcription history
+  # (AES-256). NOTE: encryption is silently a no-op unless the consuming
+  # target also defines SQLITE_HAS_CODEC=1 — see GCC_PREPROCESSOR_DEFINITIONS
+  # in the CyphrWhispr target settings below.
+  SQLCipher:
+    url: https://github.com/sqlcipher/SQLCipher.swift
+    from: "4.16.0"
 
 targets:
   CyphrWhispr:
@@ -54,6 +62,8 @@ targets:
       - package: KeyboardShortcuts
       - package: WhisperKit
         product: WhisperKit
+      - package: SQLCipher
+        product: SQLCipher
     info:
       path: CyphrWhispr/Resources/Info.plist
       properties:
@@ -90,6 +100,13 @@ targets:
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
         COMBINE_HIDPI_IMAGES: YES
+        # Required by SQLCipher.swift: without SQLITE_HAS_CODEC the linked
+        # library behaves as plain SQLite and `PRAGMA key` is ignored — the
+        # history vault would be written UNENCRYPTED. Keep this in sync with
+        # the SQLCipher package declared above.
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+          - "SQLITE_HAS_CODEC=1"
     preBuildScripts:
       - name: Strip iCloud xattrs from sources (prevents codesign failure)
         # iCloud Drive's FileProvider attaches `com.apple.FinderInfo` and other
