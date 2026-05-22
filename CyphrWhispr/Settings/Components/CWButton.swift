@@ -16,6 +16,9 @@ struct CWButton: View {
     var variant: CWButtonVariant = .primary
     var indicator: CWTokenIndicator = .none
     var live: Bool = false
+    /// When false the button dims and goes inert — for actions with nothing
+    /// to do yet, e.g. a Save button when there are no unsaved changes.
+    var enabled: Bool = true
     var action: () -> Void
 
     @EnvironmentObject private var prefs: PreferencesStore
@@ -77,17 +80,19 @@ struct CWButton: View {
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(border, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .offset(y: pressed ? 1 : 0)
-            .cwIf(variant == .primary) {
+            .cwIf(variant == .primary && enabled) {
                 $0.shadow(color: prefs.accent.opacity(0.30), radius: 6)
             }
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .onHover { hovering = enabled && $0 }
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
-                .onChanged { _ in pressed = true }
+                .onChanged { _ in if enabled { pressed = true } }
                 .onEnded   { _ in pressed = false }
         )
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
     }
 
     @ViewBuilder private var indicatorView: some View {
