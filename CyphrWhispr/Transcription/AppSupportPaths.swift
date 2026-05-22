@@ -41,6 +41,20 @@ enum AppSupportPaths {
         modelsRoot.appendingPathComponent(variantID, isDirectory: true)
     }
 
+    /// Folder holding the encrypted history vault. Created on first access.
+    /// Application Support, not Caches — the vault is user data, not a cache.
+    static var historyRoot: URL {
+        let url = appSupportRoot.appendingPathComponent("history", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// The SQLCipher-encrypted transcription-history database. The file may
+    /// not exist yet — `HistoryStore` creates it on first use.
+    static var historyVaultURL: URL {
+        historyRoot.appendingPathComponent("vault.db", isDirectory: false)
+    }
+
     /// True if the model has been fully downloaded (folder exists and has at
     /// least one .mlmodelc subdirectory inside).
     static func isModelDownloaded(_ variantID: String) -> Bool {

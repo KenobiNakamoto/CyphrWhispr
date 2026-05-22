@@ -22,7 +22,7 @@ Existing dictation tools are some combination of cloud-based, paid, account-requ
 
 ## Status
 
-This is an early, working prototype that the original author runs daily on their own Mac. Phases 1–3 are complete (menu bar + hotkey + audio + pill + transcription + paste + model picker). Phase 4 (encrypted history with BIP-39-derived keys + onboarding polish) is in progress. The app is currently **run-from-Xcode only** — no signed/notarized release builds yet. See [Roadmap](#roadmap).
+This is an early, working prototype that the original author runs daily on their own Mac. Phases 1–3 are complete (menu bar + hotkey + audio + pill + transcription + paste + model picker). Phase 4's encrypted, BIP-39-keyed transcription history is now implemented — an opt-in, on-device AES-256 vault with full-text search; onboarding polish is the last remaining v1 item. The app is currently **run-from-Xcode only** — no signed/notarized release builds yet. See [Roadmap](#roadmap).
 
 If you want to use it today: clone, run from Xcode, you're done in five minutes.
 
@@ -38,6 +38,7 @@ If you want to use it today: clone, run from Xcode, you're done in five minutes.
 - **Hardware-aware model recommendation** — first launch profiles your chip + RAM and picks an appropriate Whisper tier
 - **Custom model import** — drop any converted Core ML Whisper bundle into `~/Library/Application Support/CyphrWhispr/models/` (or pick via the Import button)
 - **Clipboard-preserving paste** — snapshots all pasteboard items + types and restores them after pasting; transcription content is marked `TransientType`/`ConcealedType` so clipboard managers (Raycast, Alfred, Paste) don't archive it
+- **Encrypted history (opt-in)** — turn it on and every dictation is appended to an AES-256 [SQLCipher](https://www.zetetic.net/sqlcipher/) vault on your Mac, unlocked by a 12-word BIP-39 recovery phrase. Browse it grouped by day, search it instantly with SQLite FTS5. Off by default; the phrase lives in your login Keychain so the vault opens automatically and never round-trips to the cloud
 - **Menu-bar only** — no Dock icon, no app switcher entry, `LSUIElement = true`
 - **Resizable Settings window** with persistent size and position
 
@@ -74,7 +75,8 @@ CyphrWhispr/
 ├── Transcription/          WhisperKit backend, model catalog, sanitizer
 ├── TextInsertion/          Clipboard-paste injector + multi-type snapshot
 ├── Hardware/               sysctl-based chip/RAM profiler + recommender
-├── Settings/               SwiftUI Settings scene (Shortcut / Models / About)
+├── History/                Encrypted SQLCipher vault, BIP-39 keys, FTS5 search
+├── Settings/               SwiftUI Settings tabs (General / Shortcut / Models / Polish / History / Customization / About)
 └── Resources/              Info.plist, entitlements, asset catalog
 ```
 
@@ -189,19 +191,18 @@ If you want to change the *fixed* parts of the design (background gradient, card
 
 ## Roadmap
 
-The original implementation plan is broken into four phases. The first three are done, the fourth is the next focus.
+The original implementation plan is broken into four phases. The first three are done; Phase 4 is largely complete.
 
 - [x] **Phase 1** — Skeleton, menu bar, hotkey, audio capture, pill window
 - [x] **Phase 2** — Streaming transcription, live partials in the pill, clipboard-preserving paste
 - [x] **Phase 3** — Hardware detect, model recommendation, downloader, custom model import
-- [ ] **Phase 4** — Encrypted history with BIP-39-derived keys, opt-in. Browseable history list with FTS5 search. Onboarding polish.
+- [ ] **Phase 4** — Encrypted history with BIP-39-derived keys. **Done:** opt-in AES-256 SQLCipher vault, day-grouped history browser, FTS5 search, auto-unlock via the login Keychain. **Remaining:** onboarding polish.
 
 Deferred to v1.1 / "ready to share":
 
 - Developer ID signing + notarization + DMG / Sparkle auto-update
 - Animated menu-bar icon states (idle / recording / transcribing)
-- Launch-at-login (`SMAppService.mainApp`)
-- iCloud Keychain sync of the derived encryption key (default off)
+- iCloud Keychain sync of the vault recovery phrase (default off)
 - "Bring your own phrase" import accepting 12/24 BIP-39 words
 
 ---

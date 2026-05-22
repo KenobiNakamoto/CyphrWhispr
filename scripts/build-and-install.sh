@@ -75,6 +75,7 @@ fi
 # -derivedDataPath pins output to our repo-local folder, so we know
 # exactly where to copy from afterwards.
 cd "${REPO_ROOT}"
+set +e
 xcodebuild \
     -project "${APP_NAME}.xcodeproj" \
     -scheme "${APP_NAME}" \
@@ -83,9 +84,48 @@ xcodebuild \
     -derivedDataPath "${DERIVED_DATA_PATH}" \
     build \
     2>&1 | tail -20
+BUILD_EXIT=${PIPESTATUS[0]}
+set -e
 
 # --- Locate the freshly-built .app ---
 BUILT_APP="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/${APP_NAME}.app"
+
+# --- Codesign retry for the iCloud xattr race ---
+# The project sits inside ~/Library/Mobile Documents/com~apple~CloudDocs/
+# (iCloud Drive). iCloud's FileProvider periodically re-attaches
+# com.apple.FinderInfo and other xattrs to bundle contents DURING the
+# build, after the pre-build "Strip iCloud xattrs" phase has already
+# run. When that happens, codesign fails with
+#   "resource fork, Finder information, or similar detritus not allowed"
+# even though the Swift compile itself was clean. Detect the case (build
+# exited non-zero AND the .app exists), strip xattrs from the bundle,
+# and re-sign manually before giving up.
+if [ ${BUILD_EXIT} -ne 0 ] && [ -d "${BUILT_APP}" ]; then
+    echo "    Build exited ${BUILD_EXIT}; checking whether codesign was the only failure..."
+    xattr -cr "${BUILT_APP}" 2>/dev/null || true
+    ENT="${DERIVED_DATA_PATH}/Build/Intermediates.noindex/${APP_NAME}.build/${CONFIGURATION}/${APP_NAME}.build/${APP_NAME}.app.xcent"
+    if [ -f "${ENT}" ]; then
+        # Sign nested helper dylibs first (--deep won't traverse them on macOS 14+).
+        find "${BUILT_APP}/Contents/MacOS" -name '*.dylib' -print0 | while IFS= read -r -d '' lib; do
+            xattr -cr "${lib}" 2>/dev/null || true
+            codesign --force --sign "CyphrWhispr Dev" -o runtime --generate-entitlement-der "${lib}" 2>/dev/null || true
+        done
+        # Sign the bundle proper.
+        if codesign --force --sign "CyphrWhispr Dev" -o runtime \
+                --entitlements "${ENT}" --generate-entitlement-der "${BUILT_APP}" 2>&1; then
+            echo "    Manual codesign recovered the build."
+            BUILD_EXIT=0
+        else
+            echo "    Manual codesign also failed — bailing." >&2
+            exit ${BUILD_EXIT}
+        fi
+    fi
+fi
+
+if [ ${BUILD_EXIT} -ne 0 ]; then
+    exit ${BUILD_EXIT}
+fi
+
 if [ ! -d "${BUILT_APP}" ]; then
     echo "ERROR: Built app not found at expected path: ${BUILT_APP}" >&2
     exit 1
