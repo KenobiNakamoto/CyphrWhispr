@@ -9,8 +9,10 @@ import SwiftUI
 ///   1. Apple Intelligence — master toggle + a live availability token
 ///      (Active / Off / Downloading / Unsupported).
 ///   2. Cleanup instructions — the prompt that drives the on-device
-///      model. Read-only default until the user customises, then an
-///      editable TextEditor with restore / reset controls.
+///      model. A read-only default until the user clicks "Customise";
+///      after that an editable draft with two controls — "Default"
+///      reverts to the shipped prompt, "Save" commits the edit. Edits
+///      only reach dictation once saved.
 struct PolishTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
 
@@ -18,6 +20,12 @@ struct PolishTabView: View {
     /// appear and whenever the toggle moves — probing is essentially
     /// free, so there's nothing to debounce.
     @State private var availability: PolishAvailability = .disabledInSettings
+
+    /// The working copy of the cleanup prompt while the editor is open.
+    /// The `TextEditor` binds here, NOT to `prefs.polishCustomPrompt`, so
+    /// keystrokes don't reach dictation until the user clicks Save. Seeded
+    /// from the saved prompt on appear and on entering customised mode.
+    @State private var draftPrompt: String = ""
 
     /// A cleaner instance used purely for availability probing here. The
     /// real pipeline cleaner lives on `AppCoordinator`; this one is
@@ -44,6 +52,11 @@ struct PolishTabView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: prefs.polishEnabled) { await refreshAvailability() }
+        .onAppear { seedDraft() }
+        .onChange(of: prefs.polishPromptIsCustomised) { _, isCustomised in
+            // Entering customised mode: open the editor on the saved prompt.
+            if isCustomised { seedDraft() }
+        }
     }
 
     // MARK: - Engine card
@@ -89,8 +102,7 @@ struct PolishTabView: View {
     // MARK: - Prompt card
 
     private var promptCard: some View {
-        Card3(title: "Cleanup instructions",
-              meta: prefs.polishPromptIsCustomised ? "customised" : "default") {
+        Card3(title: "Cleanup instructions", meta: promptCardMeta) {
             VStack(alignment: .leading, spacing: 14) {
                 if prefs.polishPromptIsCustomised {
                     promptEditor
@@ -107,6 +119,13 @@ struct PolishTabView: View {
         .animation(.easeInOut(duration: 0.18), value: prefs.polishEnabled)
     }
 
+    /// Card meta label. Flips to "unsaved" the instant the draft diverges
+    /// from the saved prompt, so the save model is legible at a glance.
+    private var promptCardMeta: String {
+        if hasUnsavedChanges { return "unsaved" }
+        return prefs.polishPromptIsCustomised ? "customised" : "default"
+    }
+
     /// Read-only default prompt. Capped height so a long default can't
     /// blow up the tab; scrolls internally past that.
     private var promptDisplay: some View {
@@ -119,16 +138,17 @@ struct PolishTabView: View {
                 .padding(12)
                 .textSelection(.enabled)
         }
-        .frame(height: 200)
+        .frame(height: 220)
         .background(promptBox(focused: false))
     }
 
-    /// Editable prompt. TextEditor offers no clean background hook, so it
+    /// Editable prompt — bound to the `draftPrompt` working copy, not to
+    /// the saved prompt. TextEditor offers no clean background hook, so it
     /// is layered inside the same rounded box the read-only display uses.
     private var promptEditor: some View {
         ZStack(alignment: .topLeading) {
             promptBox(focused: true)
-            TextEditor(text: $prefs.polishCustomPrompt)
+            TextEditor(text: $draftPrompt)
                 .font(CWFont.mono(size: CWFont.s12, weight: .regular))
                 .foregroundColor(.cwFg1)
                 .scrollContentBackground(.hidden)
@@ -150,17 +170,24 @@ struct PolishTabView: View {
     @ViewBuilder private var promptControls: some View {
         HStack(spacing: 8) {
             if prefs.polishPromptIsCustomised {
-                CWButton(title: "Restore default text", variant: .ghost) {
-                    prefs.polishCustomPrompt = CleanupPrompt.defaultPrompt
-                }
-                .help("Replace your edits with the original default text — but stay in customised mode so you can keep editing.")
-
-                CWButton(title: "Reset to default", variant: .ghost) {
+                // Left reverts to the shipped default and leaves customised
+                // mode; right commits the draft. The pair reads as a plain
+                // "discard / save" — not two buttons that both say "default".
+                CWButton(title: "Default", variant: .ghost) {
                     prefs.resetPolishPrompt()
                 }
-                .help("Switch back to the read-only default. Your edits are kept and restored if you re-customise.")
+                .help("Discard this custom prompt and go back to CyphrWhispr's "
+                    + "built-in default cleanup instructions.")
 
                 Spacer()
+
+                CWButton(title: "Save",
+                         variant: .primary,
+                         enabled: hasUnsavedChanges) {
+                    prefs.savePolishPrompt(draftPrompt)
+                }
+                .help("Apply the prompt as written. Until you save, dictation "
+                    + "keeps using the previously saved prompt.")
             } else {
                 Spacer()
                 CWButton(title: "Customise prompt",
@@ -168,9 +195,24 @@ struct PolishTabView: View {
                          indicator: .glyph("›")) {
                     prefs.enablePolishCustomPrompt()
                 }
-                .help("Edit the cleanup instructions. The default text is copied in so you can tweak it instead of starting from scratch.")
+                .help("Edit the cleanup instructions. The default text is "
+                    + "copied in so you can tweak it instead of starting from scratch.")
             }
         }
+    }
+
+    // MARK: - Draft state
+
+    /// True while the editor holds edits not yet written back by Save.
+    private var hasUnsavedChanges: Bool {
+        prefs.polishPromptIsCustomised && draftPrompt != prefs.polishCustomPrompt
+    }
+
+    /// Copy the saved prompt into the editable draft. Called on appear and
+    /// whenever the user enters customised mode, so the editor always opens
+    /// on the last-saved text rather than a stale buffer.
+    private func seedDraft() {
+        draftPrompt = prefs.polishCustomPrompt
     }
 
     // MARK: - Helpers
