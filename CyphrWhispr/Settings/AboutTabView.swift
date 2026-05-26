@@ -54,6 +54,18 @@ struct AboutTabView: View {
                     }
                 }
 
+                Card3(title: "Onboarding") {
+                    Row3(label: "Welcome tour",
+                         sub: "Re-open the first-launch checklist — permissions, model picker, and the dictation hotkey.",
+                         isLast: true) {
+                        CWButton(title: "Show again",
+                                 variant: .ghost,
+                                 indicator: .glyph("›")) {
+                            OnboardingWindowController.shared.show()
+                        }
+                    }
+                }
+
                 Card3(title: "Diagnostics", meta: "read-only") {
                     Row3(label: "Whisper.cpp",
                          sub: "ggml backend, Metal accelerated.") {

@@ -22,6 +22,7 @@ final class PreferencesStore: ObservableObject {
         static let polishEnabled = "Polish.enabled"
         static let polishPromptIsCustomised = "Polish.promptIsCustomised"
         static let polishCustomPrompt = "Polish.customPrompt"
+        static let onboardingCompleted = "Onboarding.completed"
         // General tab — new in the sidebar refactor.
         static let launchAtLogin = "General.launchAtLogin"
         static let hideMenuBarIcon = "General.hideMenuBarIcon"
@@ -176,6 +177,21 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
+    // MARK: - Onboarding
+
+    /// True once the user has seen and closed the first-run onboarding
+    /// window. The auto-open path in `AppDelegate.applicationDidFinishLaunching`
+    /// only fires when this is false; `OnboardingWindowController` flips it
+    /// to true on window close. The About tab's "Show onboarding again" row
+    /// re-opens the window; the flag is then re-set on the next close (no
+    /// harm setting true → true).
+    @Published var onboardingCompleted: Bool {
+        didSet {
+            guard onboardingCompleted != oldValue else { return }
+            UserDefaults.standard.set(onboardingCompleted, forKey: Key.onboardingCompleted)
+        }
+    }
+
     // MARK: - General tab
     //
     // Three switches and one mode-picker that live in Settings → General.
@@ -318,6 +334,7 @@ final class PreferencesStore: ObservableObject {
         self.polishPromptIsCustomised = defaults.bool(forKey: Key.polishPromptIsCustomised)
         self.polishCustomPrompt = defaults.string(forKey: Key.polishCustomPrompt)
             ?? CleanupPrompt.defaultPrompt
+        self.onboardingCompleted = defaults.bool(forKey: Key.onboardingCompleted)
 
         // General-tab defaults:
         //   • Launch at login OFF — opt-in (we don't auto-add ourselves on
