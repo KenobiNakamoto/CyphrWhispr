@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import Combine
 import QuartzCore  // CACurrentMediaTime() — monotonic clock for the install rim timer
+import UniformTypeIdentifiers  // UTType.audio / .movie filter on the Transcribe File… open panel
 
 enum AppState: Equatable {
     case idle
@@ -161,6 +162,9 @@ final class AppCoordinator {
     func start() {
         statusItem.install()
         statusItem.onQuit = { NSApp.terminate(nil) }
+        statusItem.onTranscribeFile = { [weak self] url in
+            self?.handleTranscribeFileRequest(url: url)
+        }
 
         hotkey.onPress = { [weak self] in self?.handleHotkeyPress() }
         hotkey.onRelease = { [weak self] in self?.handleHotkeyRelease() }
@@ -339,6 +343,44 @@ final class AppCoordinator {
         audio.stop()
         pill.hide()
         statusItem.remove()
+    }
+
+    // MARK: - File transcription (Phase B)
+    //
+    // Two entry points into the file-transcription pipeline funnel through
+    // here: the "Transcribe File…" menu item (passes nil → we present an
+    // open panel) and drag-onto-icon (passes the URL directly). Both end at
+    // `TranscriptResultWindowController.showNewWindow(for:)`, which opens a
+    // new floating window per file.
+
+    private func handleTranscribeFileRequest(url: URL?) {
+        if let url {
+            TranscriptResultWindowController.shared.showNewWindow(for: url)
+            return
+        }
+        presentFileTranscriptionOpenPanel()
+    }
+
+    /// `NSOpenPanel` filtered to audio/video. UTType `.audio` includes
+    /// mp3/m4a/wav/aiff/flac; `.movie` includes mp4/mov/m4v. Adding
+    /// `.audiovisualContent` keeps containers AVFoundation can crack open
+    /// (caf, 3gp) in the picker.
+    private func presentFileTranscriptionOpenPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Transcribe File"
+        panel.prompt = "Transcribe"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.audio, .movie, .audiovisualContent]
+
+        // Activate so the panel comes to the foreground reliably — this app
+        // runs as `LSUIElement = true`, which means it has no Dock entry and
+        // panels otherwise risk opening behind whatever's frontmost.
+        NSApp.activate(ignoringOtherApps: true)
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        TranscriptResultWindowController.shared.showNewWindow(for: url)
     }
 
     // MARK: - Hotkey

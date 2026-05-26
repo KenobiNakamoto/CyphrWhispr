@@ -1,8 +1,18 @@
 import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class StatusItemController {
     var onQuit: (() -> Void)?
+
+    /// Fires when the user picks "Transcribe File…" from the menu, or drops
+    /// a media file directly onto the status item glyph.
+    ///
+    /// - `nil`  → the user picked the menu item, so the host should present
+    ///            an `NSOpenPanel` filtered to audio/video.
+    /// - `URL`  → a media file the user dragged onto the icon; pass it
+    ///            straight to `TranscriptResultWindowController.showNewWindow(for:)`.
+    var onTranscribeFile: ((URL?) -> Void)?
 
     private var statusItem: NSStatusItem?
     private var hideObserver: NSObjectProtocol?
@@ -43,6 +53,7 @@ final class StatusItemController {
         if let button = item.button {
             button.image = makeLogoIcon()
             button.toolTip = "CyphrWhispr"
+            installFileDropOverlay(on: button)
         }
         item.menu = buildMenu()
         statusItem = item
@@ -103,6 +114,15 @@ final class StatusItemController {
         let menu = NSMenu()
         menu.addItem(withTitle: "CyphrWhispr", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
+        let transcribeItem = NSMenuItem(
+            title: "Transcribe File…",
+            action: #selector(transcribeFileTapped),
+            keyEquivalent: "o"
+        )
+        // `⌘O` is only active while the menu is open — not a global hotkey —
+        // but it makes the keyboard path obvious to power users.
+        transcribeItem.target = self
+        menu.addItem(transcribeItem)
         let settingsItem = NSMenuItem(
             title: "Settings…",
             action: #selector(settingsTapped),
@@ -110,6 +130,7 @@ final class StatusItemController {
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
+        menu.addItem(.separator())
         let quitItem = NSMenuItem(
             title: "Quit CyphrWhispr",
             action: #selector(quitTapped),
@@ -129,6 +150,33 @@ final class StatusItemController {
     /// because it's flaky in accessory-activation apps with no key window.)
     @objc private func settingsTapped() {
         SettingsWindowController.shared.show()
+    }
+
+    /// Menu-item handler. Passes `nil` so the host presents an open panel —
+    /// drag-onto-icon hits `onTranscribeFile` with the dragged URL instead.
+    @objc private func transcribeFileTapped() {
+        onTranscribeFile?(nil)
+    }
+
+    // MARK: - Drag-and-drop on the menu bar glyph
+    //
+    // The status item's button is an `NSStatusBarButton` we don't own and
+    // can't subclass cleanly. We get drop support by overlaying a
+    // transparent `NSView` that registers for file URL drags. `hitTest`
+    // returns nil on the overlay so mouse clicks still reach the underlying
+    // button (and its menu still opens). Drag events use a separate
+    // dispatch path that doesn't consult `hitTest`, so file drops land on
+    // the overlay.
+
+    private func installFileDropOverlay(on button: NSStatusBarButton) {
+        // Idempotent — if a previous overlay survived, leave it alone.
+        if button.subviews.contains(where: { $0 is FileDropOverlayView }) { return }
+        let overlay = FileDropOverlayView(frame: button.bounds)
+        overlay.autoresizingMask = [.width, .height]
+        overlay.onAcceptedDrop = { [weak self] url in
+            self?.onTranscribeFile?(url)
+        }
+        button.addSubview(overlay)
     }
 
     private func makeIcon(symbolName: String) -> NSImage {
@@ -187,5 +235,68 @@ final class StatusItemController {
         }
         image.isTemplate = true
         return image
+    }
+}
+
+// MARK: - File drop overlay
+
+/// Transparent overlay subview that turns the menu-bar glyph into a drop
+/// target for audio/video files. Filters dragged URLs via UTType so the
+/// drop visually rejects non-media files (no `.copy` cursor badge appears
+/// while dragging a random text file over the icon).
+private final class FileDropOverlayView: NSView {
+    /// Called once with the accepted file URL when a media-conforming file
+    /// is dropped on the menu bar glyph.
+    var onAcceptedDrop: ((URL) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL])
+    }
+    required init?(coder: NSCoder) { nil }
+
+    /// Returning nil lets mouse clicks fall through to the underlying
+    /// `NSStatusBarButton`, so the menu still opens normally. Drag-and-
+    /// drop events use a separate dispatch path that doesn't consult
+    /// `hitTest`, so the overlay still receives them.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.firstAcceptableURL(from: sender) != nil ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.firstAcceptableURL(from: sender) != nil ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let url = Self.firstAcceptableURL(from: sender) else { return false }
+        onAcceptedDrop?(url)
+        return true
+    }
+
+    /// First audio/video URL on the dragging pasteboard, or nil if the
+    /// drag carries no acceptable file. Dragging several files at once
+    /// transcribes the first media file; non-media siblings are ignored.
+    /// (Multi-file batching is a v2 concern — for now a single window per
+    /// drop matches the "ad-hoc" framing.)
+    private static func firstAcceptableURL(from sender: NSDraggingInfo) -> URL? {
+        let urls = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: NSNumber(value: true)]
+        ) as? [URL] ?? []
+        return urls.first(where: { isMediaFile($0) })
+    }
+
+    private static func isMediaFile(_ url: URL) -> Bool {
+        guard let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType else {
+            return false
+        }
+        // `.audio` covers mp3/m4a/wav/aiff/flac; `.movie` covers mp4/mov/m4v;
+        // `.audiovisualContent` is the umbrella so we accept exotic
+        // containers AVFoundation supports (e.g. caf, 3gp).
+        return type.conforms(to: .audio)
+            || type.conforms(to: .movie)
+            || type.conforms(to: .audiovisualContent)
     }
 }
