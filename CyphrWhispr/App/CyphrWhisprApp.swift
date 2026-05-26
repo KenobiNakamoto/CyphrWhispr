@@ -27,6 +27,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = LaunchAtLoginService.shared
         coordinator.start()
 
+        // First-run welcome window. Auto-opens once; closing it flips
+        // `prefs.onboardingCompleted` so the next launch is quiet. Re-open
+        // from About → "Show onboarding again".
+        if !PreferencesStore.shared.onboardingCompleted {
+            OnboardingWindowController.shared.show()
+        }
+
         // Register the cyphr-whispr:// URL handler so `open cyphr-whispr://...`
         // can drive the app remotely (scripting, deep-links). We use the
         // legacy NSAppleEventManager API rather than `.onOpenURL` because
@@ -51,6 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch url.host {
         case "open-settings":
             SettingsWindowController.shared.show()
+        case "open-onboarding":
+            OnboardingWindowController.shared.show()
         default:
             break
         }
