@@ -28,9 +28,6 @@ struct HistoryTabView: View {
     /// Drives the destructive "clear all" confirmation dialog.
     @State private var showClearConfirm = false
 
-    /// Non-nil only while the recovery-phrase sheet is up.
-    @State private var phrasePresentation: PhrasePresentation?
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -69,13 +66,6 @@ struct HistoryTabView: View {
                 history.bootstrap()
             }
         }
-        .sheet(item: $phrasePresentation) { presentation in
-            RecoveryPhraseSheet(phrase: presentation.phrase,
-                                isFirstTime: presentation.isFirstTime) {
-                phrasePresentation = nil
-            }
-            .environmentObject(prefs)
-        }
         .confirmationDialog("Delete all transcription history?",
                             isPresented: $showClearConfirm,
                             titleVisibility: .visible) {
@@ -111,10 +101,19 @@ struct HistoryTabView: View {
                         + "CyphrWhispr.",
                      isLast: true) {
                     CWButton(title: "Reveal", variant: .ghost, indicator: .glyph("↗")) {
-                        if let phrase = history.recoveryPhrase {
-                            phrasePresentation = PhrasePresentation(phrase: phrase,
-                                                                    isFirstTime: false)
+                        guard let phrase = history.recoveryPhrase else {
+                            // Defensive — history is enabled but the
+                            // Keychain access returned nil. Usually a
+                            // re-signing / ACL mismatch; surface to the
+                            // log so the user can grab it with Console.
+                            NSLog("[CyphrWhispr] Reveal: Keychain returned no recovery phrase")
+                            return
                         }
+                        RecoveryPhraseSheetPresenter.present(
+                            phrase: phrase,
+                            isFirstTime: false,
+                            prefs: prefs
+                        )
                     }
                 }
             }
@@ -139,8 +138,11 @@ struct HistoryTabView: View {
             set: { wantOn in
                 if wantOn {
                     if let freshPhrase = history.enableHistory() {
-                        phrasePresentation = PhrasePresentation(phrase: freshPhrase,
-                                                                isFirstTime: true)
+                        RecoveryPhraseSheetPresenter.present(
+                            phrase: freshPhrase,
+                            isFirstTime: true,
+                            prefs: prefs
+                        )
                     }
                 } else {
                     history.disableHistory()
@@ -426,15 +428,78 @@ struct HistoryTabView: View {
     }()
 }
 
-// MARK: - Sheet presentation token
+// MARK: - Recovery-phrase sheet presenter
+//
+// We present the recovery-phrase sheet via AppKit's `NSWindow.beginSheet`
+// rather than SwiftUI's `.sheet(item:)` because the latter has historically
+// misbehaved when attached to views hosted in `NSHostingController`: in
+// multi-display setups (or with `.fullSizeContentView` + transparent
+// titlebar parent windows, as the Settings window has) the sheet can end up
+// rendered as a free-floating panel positioned outside the parent — visible
+// in single-display test runs but easy to lose track of when the user has
+// a non-trivial monitor arrangement. AppKit's `beginSheet` guarantees a
+// real, title-bar-attached sheet modal to the parent window.
 
-/// Identifiable wrapper so the recovery-phrase sheet can be driven by
-/// `.sheet(item:)`. `isFirstTime` switches the sheet between the one-time
-/// "save this now" framing and the later "review" framing.
-private struct PhrasePresentation: Identifiable {
-    let id = UUID()
-    let phrase: String
-    let isFirstTime: Bool
+@MainActor
+enum RecoveryPhraseSheetPresenter {
+    /// Open the BIP-39 recovery-phrase sheet as a real macOS sheet on top
+    /// of the Settings window. Idempotent — if another sheet is already up
+    /// on the same parent, this no-ops (macOS won't stack two sheets).
+    static func present(phrase: String,
+                        isFirstTime: Bool,
+                        prefs: PreferencesStore) {
+        guard let parent = settingsHostWindow() else {
+            NSLog("[CyphrWhispr] Recovery phrase sheet: no host window to attach to")
+            return
+        }
+        guard parent.attachedSheet == nil else {
+            // A sheet is already up — defer to it instead of stacking. The
+            // user re-fires by closing the existing sheet first.
+            return
+        }
+
+        // Pre-construct the sheet window so the SwiftUI dismiss closure can
+        // close it directly. `weak` on the capture so the closure doesn't
+        // outlive the window if AppKit tears it down for any other reason.
+        //
+        // Borderless style mask: a real attached sheet has no title bar of
+        // its own — AppKit slides it down from the parent window's title
+        // bar. With `.titled` here the sheet would render its own redundant
+        // title bar AND fail to attach properly; without it, `beginSheet`
+        // does the right thing.
+        let sheetWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 468, height: 380),
+            styleMask: [.borderless, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        sheetWindow.appearance = NSAppearance(named: .darkAqua)
+        sheetWindow.backgroundColor = NSColor(SettingsDesign.pageBackground)
+        sheetWindow.isOpaque = true
+
+        let dismiss: () -> Void = { [weak parent, weak sheetWindow] in
+            guard let parent, let sheetWindow else { return }
+            parent.endSheet(sheetWindow)
+        }
+        let host = NSHostingController(
+            rootView: RecoveryPhraseSheet(phrase: phrase,
+                                          isFirstTime: isFirstTime,
+                                          onDismiss: dismiss)
+                .environmentObject(prefs)
+        )
+        sheetWindow.contentViewController = host
+
+        parent.beginSheet(sheetWindow, completionHandler: nil)
+    }
+
+    /// Walk every visible NSWindow and find the one hosting the Settings UI.
+    /// The Settings window is the only one carrying the
+    /// `CyphrWhispr — Settings` title, so a title-prefix match is reliable.
+    private static func settingsHostWindow() -> NSWindow? {
+        NSApp.windows.first { window in
+            window.isVisible && window.title.hasPrefix("CyphrWhispr — Settings")
+        }
+    }
 }
 
 // MARK: - Day group
