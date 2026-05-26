@@ -60,6 +60,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SettingsWindowController.shared.show()
         case "open-onboarding":
             OnboardingWindowController.shared.show()
+        case "transcribe-file":
+            // `cyphr-whispr://transcribe-file?path=/Users/.../podcast.mp3`
+            // — extracted via URLComponents so percent-encoding decodes
+            // properly. Phase A entry point; Phase B/C/D add menu-bar,
+            // Settings-tab, and Finder-Sync paths that all funnel into the
+            // same `TranscriptResultWindowController.showNewWindow(for:)`.
+            guard let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                                .queryItems?
+                                .first(where: { $0.name == "path" })?
+                                .value,
+                  !path.isEmpty else { return }
+            let fileURL = URL(fileURLWithPath: path)
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                NSLog("[CyphrWhispr] transcribe-file URL: no file at \(fileURL.path)")
+                return
+            }
+            TranscriptResultWindowController.shared.showNewWindow(for: fileURL)
         default:
             break
         }
