@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 /// Manages floating result windows produced by ad-hoc file transcription.
 ///
@@ -22,6 +23,7 @@ final class TranscriptResultWindowController {
         let window: NSWindow
         let service: FileTranscriptionService
         var willCloseObserver: NSObjectProtocol?
+        var statusObserver: AnyCancellable?
     }
     private var entries: [UUID: Entry] = [:]
 
@@ -85,7 +87,29 @@ final class TranscriptResultWindowController {
             }
         }
 
-        entries[id] = Entry(window: window, service: service, willCloseObserver: observer)
+        // Record into the recents store the moment the service flips to its
+        // terminal state. Subscribed here, not on the view, because views
+        // come and go (the user might close the result window before the
+        // .done/.failed lands) and we want recents to capture the outcome
+        // either way.
+        let statusObserver = service.$status
+            .receive(on: RunLoop.main)
+            .sink { status in
+                switch status {
+                case .done(let transcript):
+                    RecentTranscriptionsStore.shared.record(transcript)
+                case .failed(let message):
+                    RecentTranscriptionsStore.shared.recordFailure(url: url,
+                                                                   message: message)
+                case .idle, .decoding, .transcribing:
+                    break
+                }
+            }
+
+        entries[id] = Entry(window: window,
+                            service: service,
+                            willCloseObserver: observer,
+                            statusObserver: statusObserver)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }

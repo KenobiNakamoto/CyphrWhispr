@@ -28,6 +28,7 @@ struct SettingsView: View {
         case general       = "General"
         case shortcut      = "Shortcut"
         case models        = "Models"
+        case transcribe    = "Transcribe"
         case polish        = "Polish"
         case history       = "History"
         case customization = "Customization"
@@ -42,6 +43,9 @@ struct SettingsView: View {
             case .general:       return "⌘"
             case .shortcut:      return "⌥"
             case .models:        return "◇"
+            // "Transcribe" — arrow-into-tray glyph reads as "file in, text
+            // out" without colliding with any existing brand glyph.
+            case .transcribe:    return "⤓"
             case .polish:        return "✦"
             case .history:       return "⌗"
             case .customization: return "◐"
@@ -156,6 +160,7 @@ struct SettingsView: View {
             case .general:       GeneralTabView()
             case .shortcut:      ShortcutTabView()
             case .models:        ModelsTabView()
+            case .transcribe:    TranscribeTabView()
             case .polish:        PolishTabView()
             case .history:       HistoryTabView()
             case .customization: CustomizationTabView()
