@@ -93,6 +93,32 @@ targets:
           - CFBundleURLName: com.cyphr.whispr
             CFBundleURLSchemes:
               - cyphr-whispr
+        # `CFBundleDocumentTypes` registers CyphrWhispr as an alternate
+        # handler for audio + video files. The effect on macOS:
+        #   • Voice Memos' "Open With" submenu (right-click a recording)
+        #     surfaces CyphrWhispr — system-native path from Voice Memos to
+        #     a transcript without touching the Voice Memos library or
+        #     asking for Full Disk Access.
+        #   • Finder's "Open With" submenu does the same for any .m4a /
+        #     .mp3 / .mp4 / .mov / etc. on the system.
+        #   • System Share menus pick us up automatically once we declare
+        #     these types.
+        # `LSHandlerRank: Alternate` means we never displace Music.app or
+        # QuickTime as the *default* handler — we just appear in the
+        # submenu. Users explicitly pick us; that's the privacy-respecting
+        # default. The URLs arrive at `AppDelegate.application(_:open:)`.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: "Audio file"
+            CFBundleTypeRole: "Viewer"
+            LSHandlerRank: "Alternate"
+            LSItemContentTypes:
+              - public.audio
+              - public.audiovisual-content
+          - CFBundleTypeName: "Video file"
+            CFBundleTypeRole: "Viewer"
+            LSHandlerRank: "Alternate"
+            LSItemContentTypes:
+              - public.movie
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: CyphrWhispr/Resources/CyphrWhispr.entitlements

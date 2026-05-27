@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers  // UTType.audio / .movie filter in application(_:open:)
 
 @main
 struct CyphrWhisprApp: App {
@@ -48,6 +49,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator.shutdown()
+    }
+
+    /// Files handed to us via Voice Memos' "Open With" submenu, Finder's
+    /// Open With submenu, system Share extensions, or `open -a CyphrWhispr
+    /// <file>` from the terminal — every system-level "open this with
+    /// CyphrWhispr" path lands here. Registered indirectly via the
+    /// `CFBundleDocumentTypes` declaration in `project.yml`, which tells
+    /// macOS we're a viewer for `public.audio` / `public.movie` /
+    /// `public.audiovisual-content` (always with `LSHandlerRank: Alternate`
+    /// so we never displace Music.app or QuickTime as the default).
+    ///
+    /// Routes each URL through the same `TranscriptResultWindowController`
+    /// the menu-bar drop overlay, the Transcribe-tab drop zone, and the
+    /// `cyphr-whispr://transcribe-file` URL scheme already use — one result
+    /// window per file, cascade-offset for legibility on multi-file bursts.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        // LSUIElement = true means we have no Dock icon, so the result
+        // window can otherwise open behind whichever app the user clicked
+        // "Open With" from (Voice Memos, Finder, etc.). Explicit activate
+        // puts the window in front the moment it materialises.
+        NSApp.activate(ignoringOtherApps: true)
+        for url in urls where Self.isMediaFile(url) {
+            TranscriptResultWindowController.shared.showNewWindow(for: url)
+        }
+    }
+
+    /// UTType conformance check — mirrors the predicate the menu-bar drop
+    /// overlay and the Transcribe-tab drop zone use, kept here so a stray
+    /// non-media file passed via `open -a CyphrWhispr foo.txt` from the
+    /// terminal doesn't open a useless empty result window.
+    private static func isMediaFile(_ url: URL) -> Bool {
+        guard let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType
+        else { return false }
+        return type.conforms(to: .audio)
+            || type.conforms(to: .movie)
+            || type.conforms(to: .audiovisualContent)
     }
 
     /// Routes `cyphr-whispr://...` URLs to the right runtime action. Currently
