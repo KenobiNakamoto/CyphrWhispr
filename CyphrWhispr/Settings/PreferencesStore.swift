@@ -45,10 +45,21 @@ final class PreferencesStore: ObservableObject {
         case pushToTalk = "push_to_talk"
         case toggle = "toggle"
         var id: String { rawValue }
+        /// Verbose label used in Settings → Shortcut where a longer
+        /// description is appropriate.
         var displayName: String {
             switch self {
             case .pushToTalk: return "Push to talk"
             case .toggle:     return "Toggle"
+            }
+        }
+        /// Concise, action-oriented label used in the menu-bar dropdown's
+        /// activation submenu. Tighter wording for the smaller surface —
+        /// reads as a verb the user is choosing rather than a category.
+        var menuLabel: String {
+            switch self {
+            case .pushToTalk: return "Push and hold"
+            case .toggle:     return "Tap to toggle"
             }
         }
     }

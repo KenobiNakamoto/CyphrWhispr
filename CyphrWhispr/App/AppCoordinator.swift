@@ -741,6 +741,12 @@ final class AppCoordinator {
         // and never throws back into the paste path.
         HistoryService.shared.record(text: cleaned, sourceApp: sessionSourceApp)
 
+        // Mirror the finished text into the RAM-only "last transcript" so
+        // the menu-bar dropdown's Copy entry can hand it back to the user
+        // without a vault round-trip — and so it works even when history
+        // is disabled. Privacy contract intact: nothing persisted to disk.
+        LastTranscriptStore.shared.record(cleaned)
+
         typingQueue.async { [weak self] in
             guard let self else { return }
             // committingFinal: true → final delta is keystroke-typed, not

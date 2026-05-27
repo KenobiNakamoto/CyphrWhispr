@@ -65,6 +65,18 @@ enum AppSupportPaths {
         return contents.contains { $0.hasSuffix(".mlmodelc") }
     }
 
+    /// Every variant ID currently downloaded to disk. Single directory
+    /// listing — cheap enough to call on every menu open without caching.
+    /// Used by `ModelInventory.refresh()` (Settings → Models) and by the
+    /// menu-bar status item's model switcher submenu so the two surfaces
+    /// agree on what counts as installed.
+    static func downloadedModelIDs() -> Set<String> {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: modelsRoot.path) else {
+            return []
+        }
+        return Set(names.filter { isModelDownloaded($0) })
+    }
+
     /// Approximate disk footprint of a downloaded model (in bytes). Returns 0
     /// if the model isn't present. Used in the Models tab to show "470 MB".
     static func diskSize(of variantID: String) -> Int64 {
