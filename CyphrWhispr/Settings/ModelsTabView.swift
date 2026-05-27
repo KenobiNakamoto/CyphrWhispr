@@ -286,13 +286,10 @@ final class ModelInventory: ObservableObject {
     }
 
     private func scanDownloaded() -> Set<String> {
-        let root = AppSupportPaths.modelsRoot
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: root.path) else {
-            return []
-        }
-        return Set(names.filter { name in
-            AppSupportPaths.isModelDownloaded(name)
-        })
+        // Single source of truth lives in AppSupportPaths so the Models
+        // tab and the menu-bar status item's switcher submenu agree on
+        // what counts as "installed".
+        AppSupportPaths.downloadedModelIDs()
     }
 
     // MARK: - Custom import

@@ -1,8 +1,9 @@
 import AppKit
 import UniformTypeIdentifiers
+import KeyboardShortcuts  // .toggleDictation name + getShortcut for menu header
 
 @MainActor
-final class StatusItemController {
+final class StatusItemController: NSObject, NSMenuDelegate {
     var onQuit: (() -> Void)?
 
     /// Fires when the user picks "Transcribe File…" from the menu, or drops
@@ -110,19 +111,89 @@ final class StatusItemController {
         }
     }
 
+    // MARK: - Menu construction
+    //
+    // The menu is rebuilt on every open via the NSMenuDelegate callback
+    // (`menuNeedsUpdate`) so that dynamic state stays fresh without us
+    // wiring per-property observers: the shortcut display reflects any
+    // rebind the user just made in Settings, the activation-mode
+    // checkmark mirrors whatever `prefs.activationMode` is RIGHT NOW,
+    // the model submenu only lists models that are still on disk, and
+    // the "Last transcription" preview reflects the most recent commit.
+    // Rebuilding ~once per click of the menubar icon is essentially free
+    // and dodges a whole class of "stale checkmark / stale entry" bugs.
+    //
+    // Stable structure (most → least frequent interaction):
+    //   1. Hotkey + activation mode (top — answers "how do I use this?")
+    //   2. Last transcription (preview + Copy)
+    //   3. Model + switcher
+    //   4. History / Transcribe / Settings (windowed surfaces)
+    //   5. Quit
+
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(withTitle: "CyphrWhispr", action: nil, keyEquivalent: "")
+        menu.autoenablesItems = false  // we set `isEnabled` explicitly per item
+        menu.delegate = self
+        // Build once so the menu is populated even if `menuNeedsUpdate`
+        // doesn't fire on initial install (e.g. AppKit only calls it on
+        // user-initiated opens). Subsequent opens replace the contents.
+        rebuildMenuItems(into: menu)
+        return menu
+    }
+
+    /// NSMenuDelegate hook — fires immediately before the menu becomes
+    /// visible each time the user clicks the status item. We always
+    /// regenerate the full item list rather than diffing because the data
+    /// shape (checkmarks across two submenus, a variable-length model
+    /// list, a Copy item that may or may not exist) makes incremental
+    /// updates more error-prone than it's worth. Rebuilding ~once per
+    /// click is imperceptible.
+    nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
+        // The delegate method itself is nonisolated (per the AppKit
+        // protocol), so hop to the main actor to touch our state.
+        MainActor.assumeIsolated {
+            rebuildMenuItems(into: menu)
+        }
+    }
+
+    private func rebuildMenuItems(into menu: NSMenu) {
+        menu.removeAllItems()
+
+        // No "CyphrWhispr" title row — the status-bar glyph is already the
+        // brand affordance and the menu shouldn't waste its first slot on
+        // restating what the user clicked to open it.
+
+        // --- Section 1: hotkey + activation mode -----------------------
+        addHotkeySection(to: menu)
         menu.addItem(.separator())
+
+        // --- Section 2: last transcription preview + Copy --------------
+        addLastTranscriptSection(to: menu)
+        menu.addItem(.separator())
+
+        // --- Section 3: model + switcher submenu -----------------------
+        addModelSection(to: menu)
+        menu.addItem(.separator())
+
+        // --- Section 4: windowed surfaces ------------------------------
+        let historyItem = NSMenuItem(
+            title: "History…",
+            action: #selector(historyTapped),
+            keyEquivalent: ""
+        )
+        historyItem.target = self
+        menu.addItem(historyItem)
+
         let transcribeItem = NSMenuItem(
             title: "Transcribe File…",
             action: #selector(transcribeFileTapped),
             keyEquivalent: "o"
         )
-        // `⌘O` is only active while the menu is open — not a global hotkey —
+        // ⌘O is only active while the menu is open — not a global hotkey —
         // but it makes the keyboard path obvious to power users.
         transcribeItem.target = self
         menu.addItem(transcribeItem)
+
         let settingsItem = NSMenuItem(
             title: "Settings…",
             action: #selector(settingsTapped),
@@ -130,7 +201,10 @@ final class StatusItemController {
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
+
         menu.addItem(.separator())
+
+        // --- Section 5: Quit -------------------------------------------
         let quitItem = NSMenuItem(
             title: "Quit CyphrWhispr",
             action: #selector(quitTapped),
@@ -138,8 +212,138 @@ final class StatusItemController {
         )
         quitItem.target = self
         menu.addItem(quitItem)
-        return menu
     }
+
+    // MARK: Section 1 — hotkey + activation mode
+    //
+    // Two clickable rows, no submenu — the menu's already short and a
+    // submenu for a 2-state toggle is more friction than the toggle saves.
+    //
+    //   • Shortcut row  — title is the live shortcut ("⌥Space"). Click
+    //     opens Settings → Shortcut, where the KeyboardShortcuts recorder
+    //     handles the actual rebind.
+    //   • Mode row      — title is the current activation mode label.
+    //     Click flips it to the other mode in place; the next hotkey
+    //     press picks up the new mode (`HotkeyManager` re-wires on
+    //     `.activationModeDidChange`).
+    //
+    // Both rows carry tooltips that explain the action; the menu itself
+    // shows the *state*, not "Click to change…" verbosity.
+
+    private func addHotkeySection(to menu: NSMenu) {
+        // Shortcut row — display + jump-to-Settings.
+        let shortcutItem = NSMenuItem(
+            title: currentShortcutDescription(),
+            action: #selector(openShortcutSettings),
+            keyEquivalent: ""
+        )
+        shortcutItem.target = self
+        shortcutItem.toolTip = "Click to change the dictation shortcut"
+        menu.addItem(shortcutItem)
+
+        // Mode toggle row — clicking flips between push-to-talk and toggle.
+        let currentMode = PreferencesStore.shared.activationMode
+        let otherMode: PreferencesStore.ActivationMode =
+            (currentMode == .pushToTalk) ? .toggle : .pushToTalk
+        let modeItem = NSMenuItem(
+            title: currentMode.menuLabel,
+            action: #selector(toggleActivationMode),
+            keyEquivalent: ""
+        )
+        modeItem.target = self
+        modeItem.toolTip = "Click to switch to \(otherMode.menuLabel)"
+        menu.addItem(modeItem)
+    }
+
+    /// "⌥Space" / "⌃⌘C" / "No shortcut bound". Pulls from
+    /// `KeyboardShortcuts.getShortcut(for:)`, which is updated by the
+    /// rebind recorder in Settings and persisted via the library's own
+    /// UserDefaults backing.
+    private func currentShortcutDescription() -> String {
+        if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleDictation) {
+            return shortcut.description
+        }
+        return "No shortcut bound"
+    }
+
+    // MARK: Section 2 — last transcription
+    //
+    // Single-row action — the verbatim transcript stays out of the menu
+    // entirely. Showing the text inline made the menu feel like a
+    // history surface (which History tab already is) and could surface
+    // sensitive content over the user's shoulder; the menu's role here
+    // is just "copy what I just dictated again".
+
+    private func addLastTranscriptSection(to menu: NSMenu) {
+        let hasTranscript = LastTranscriptStore.shared.lastTranscript != nil
+        let item = NSMenuItem(
+            title: hasTranscript ? "Copy last transcription" : "No recent transcription",
+            action: hasTranscript ? #selector(copyLastTranscriptTapped) : nil,
+            keyEquivalent: hasTranscript ? "c" : ""
+        )
+        item.target = hasTranscript ? self : nil
+        item.isEnabled = hasTranscript
+        if hasTranscript {
+            item.toolTip = "Copy the last dictated text to the clipboard"
+        }
+        menu.addItem(item)
+    }
+
+    // MARK: Section 3 — model + switcher submenu
+
+    private func addModelSection(to menu: NSMenu) {
+        let activeID = PreferencesStore.shared.activeModelID
+        let activeName = ModelCatalog.model(id: activeID)?.displayName ?? activeID
+        let header = NSMenuItem(title: "Model: \(activeName)", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+
+        let switcherItem = NSMenuItem(title: "Switch model", action: nil, keyEquivalent: "")
+        let switcherSubmenu = NSMenu(title: "Switch model")
+        switcherSubmenu.autoenablesItems = false
+
+        let downloaded = AppSupportPaths.downloadedModelIDs()
+        if downloaded.isEmpty {
+            let none = NSMenuItem(title: "No models installed", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            switcherSubmenu.addItem(none)
+        } else {
+            // Stable display order: catalog order first (matches the
+            // Settings → Models list), then any custom/imported models
+            // alphabetically at the bottom. The user's mental model
+            // — "the order I see in Settings" — should match here.
+            let catalogIDs = ModelCatalog.all.map(\.id)
+            let orderedDownloaded: [String] =
+                catalogIDs.filter { downloaded.contains($0) }
+                + downloaded.subtracting(catalogIDs).sorted()
+
+            for id in orderedDownloaded {
+                let display = ModelCatalog.model(id: id)?.displayName ?? id
+                let item = NSMenuItem(
+                    title: display,
+                    action: #selector(modelPicked(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = id
+                item.state = (id == activeID) ? .on : .off
+                switcherSubmenu.addItem(item)
+            }
+        }
+        switcherSubmenu.addItem(.separator())
+        let manageItem = NSMenuItem(
+            title: "Manage models…",
+            action: #selector(openModelsSettings),
+            keyEquivalent: ""
+        )
+        manageItem.target = self
+        switcherSubmenu.addItem(manageItem)
+
+        switcherItem.submenu = switcherSubmenu
+        menu.addItem(switcherItem)
+    }
+
+    // MARK: - Action handlers
 
     @objc private func quitTapped() {
         onQuit?()
@@ -156,6 +360,63 @@ final class StatusItemController {
     /// drag-onto-icon hits `onTranscribeFile` with the dragged URL instead.
     @objc private func transcribeFileTapped() {
         onTranscribeFile?(nil)
+    }
+
+    /// Pre-select the History tab via UserDefaults, then surface the
+    /// Settings window. `@AppStorage("cw.settings.tab")` inside SettingsView
+    /// observes UserDefaults, so the write before `.show()` takes effect
+    /// on the next view evaluation — including when the window is already
+    /// open and we're just bringing it forward.
+    @objc private func historyTapped() {
+        UserDefaults.standard.set(
+            "History",
+            forKey: "cw.settings.tab"
+        )
+        SettingsWindowController.shared.show()
+    }
+
+    /// Same pattern as `historyTapped` but for the Shortcut tab — the menu's
+    /// "Change shortcut…" leaf inside the Activation submenu lands here.
+    @objc private func openShortcutSettings() {
+        UserDefaults.standard.set(
+            "Shortcut",
+            forKey: "cw.settings.tab"
+        )
+        SettingsWindowController.shared.show()
+    }
+
+    /// Same pattern but for the Models tab — the model switcher submenu's
+    /// "Manage models…" tail lands here.
+    @objc private func openModelsSettings() {
+        UserDefaults.standard.set(
+            "Models",
+            forKey: "cw.settings.tab"
+        )
+        SettingsWindowController.shared.show()
+    }
+
+    @objc private func copyLastTranscriptTapped() {
+        LastTranscriptStore.shared.copyToPasteboard()
+    }
+
+    /// Flip the activation mode from push-to-talk to toggle (or back).
+    /// Writing to `prefs.activationMode` posts `.activationModeDidChange`,
+    /// which `HotkeyManager` already observes — the mode swap takes effect
+    /// on the very next hotkey press, with no app restart needed.
+    @objc private func toggleActivationMode() {
+        let prefs = PreferencesStore.shared
+        prefs.activationMode = (prefs.activationMode == .pushToTalk) ? .toggle : .pushToTalk
+    }
+
+    /// Model picker items carry the variant ID in `representedObject`.
+    /// Writing to `prefs.activeModelID` flows through the existing Combine
+    /// sink in `AppCoordinator.start()`, which triggers `switchModel(to:)`
+    /// — same path the Settings → Models tab uses, so the menu pick
+    /// gets the same hot-swap behaviour (cancels mid-session if recording,
+    /// shows the loading-model state in the menu bar, etc.).
+    @objc private func modelPicked(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        PreferencesStore.shared.activeModelID = id
     }
 
     // MARK: - Drag-and-drop on the menu bar glyph
