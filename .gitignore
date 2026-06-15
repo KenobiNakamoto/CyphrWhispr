@@ -12,6 +12,12 @@ xcuserdata/
 *.xcuserdata
 *.moved-aside
 
+# LLVM coverage artefacts that XCTest drops in the working directory
+# whenever a test run is invoked. Not useful to track and they keep
+# reappearing if not ignored.
+*.profraw
+*.profdata
+
 # Swift Package Manager
 .swiftpm/
 .build/
