@@ -22,14 +22,27 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CyphrWhispr"
 INSTALL_PATH="/Applications/${APP_NAME}.app"
-# Force xcodebuild to output into a repo-local DerivedData. Without this,
-# xcodebuild picks a project-hashed folder under ~/Library/Developer/
-# Xcode/DerivedData/ where the hash can change subtly across runs (cwd
-# differences, Xcode previews touching files), and `ls -td` would
-# sometimes pick a stale .app from a *different* DerivedData folder
-# than the one xcodebuild actually wrote to. Repo-local kills that
-# entire class of bug — and lives inside .gitignore'd build/.
-DERIVED_DATA_PATH="${REPO_ROOT}/build/derived"
+# Pin xcodebuild's output to a known, *non-iCloud* location.
+#
+# Two reasons:
+#   1. xcodebuild's default DerivedData lives under
+#      ~/Library/Developer/Xcode/DerivedData/ in a project-hashed folder
+#      whose hash can shift subtly across runs (cwd differences, Xcode
+#      previews touching files). Pinning the path means `ls -td` etc.
+#      always pick the bundle xcodebuild actually just wrote.
+#   2. The repo lives inside iCloud Drive. iCloud's FileProvider
+#      periodically re-attaches `com.apple.FinderInfo` and other xattrs
+#      to bundle contents DURING the build, which makes codesign fail
+#      with "resource fork, Finder information, or similar detritus
+#      not allowed" — even though the Swift compile itself was clean.
+#      Building INTO iCloud Drive (e.g. ${REPO_ROOT}/build/derived) loses
+#      the race regularly. Outside iCloud, codesign just works.
+#
+# ~/Library/Caches/ is the conventional macOS spot for regenerable
+# build state: it persists across reboots (fast incremental rebuilds)
+# but Time Machine and iCloud both skip it by design.
+DERIVED_DATA_PATH="${HOME}/Library/Caches/CyphrWhispr/derived"
+mkdir -p "${DERIVED_DATA_PATH}"
 
 # --- Argument parsing ---
 CONFIGURATION="Debug"
