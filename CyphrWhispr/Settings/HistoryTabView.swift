@@ -489,7 +489,35 @@ enum RecoveryPhraseSheetPresenter {
         )
         sheetWindow.contentViewController = host
 
-        parent.beginSheet(sheetWindow, completionHandler: nil)
+        // Esc-to-dismiss. Native AppKit sheets respond to Esc; ours is a
+        // SwiftUI view hosted inside a borderless NSWindow, which does not
+        // get the same treatment for free. A local NSEvent monitor scoped
+        // to this sheet's lifetime catches keyDown 53 (Esc) on the sheet
+        // window and routes it through the same `dismiss` closure the Done
+        // button calls. Removed in the beginSheet completion handler so the
+        // monitor doesn't outlive the sheet.
+        //
+        // Filtering on `event.keyCode == 53` (rather than the
+        // `charactersIgnoringModifiers` check) dodges IME edge cases where
+        // an active input method swallows the character mapping but the
+        // raw keyCode still fires.
+        var escapeMonitor: Any?
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak sheetWindow] event in
+            guard event.keyCode == 53,
+                  let sw = sheetWindow,
+                  event.window === sw else {
+                return event
+            }
+            dismiss()
+            return nil  // consume the Esc so the sheet's content doesn't also see it
+        }
+
+        parent.beginSheet(sheetWindow) { _ in
+            if let token = escapeMonitor {
+                NSEvent.removeMonitor(token)
+                escapeMonitor = nil
+            }
+        }
     }
 
     /// Walk every visible NSWindow and find the one hosting the Settings UI.
