@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 
 /// Content for the file-transcription result window. Driven by a single
 /// `FileTranscriptionService` bound at construction. Lifecycle is owned by
@@ -249,42 +248,11 @@ struct TranscriptResultView: View {
         pb.setString(text, forType: .string)
     }
 
-    /// `NSSavePanel` showing all three formats. The user picks the extension
-    /// from the panel's built-in type popup; we look at the chosen URL's
-    /// `pathExtension` to decide which exporter to run.
+    /// `NSSavePanel` with a format-chooser popup covering all four export
+    /// formats (plain text, timestamped + silence, SRT, VTT). The controller
+    /// owns the panel + popup wiring; see `TranscriptSavePanel` for why we
+    /// use a custom popup instead of the panel's built-in File Format menu.
     private func presentSavePanel(for transcript: FileTranscript) {
-        let panel = NSSavePanel()
-        panel.title = "Save Transcript"
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue =
-            transcript.sourceURL.deletingPathExtension().lastPathComponent + ".txt"
-        panel.directoryURL = transcript.sourceURL.deletingLastPathComponent()
-
-        // `.plainText` is the default; the SRT/VTT entries appear in the
-        // save panel's "File Format" popup so the user can switch in one
-        // gesture without leaving the dialog.
-        var types: [UTType] = [.plainText]
-        if let srt = UTType(filenameExtension: "srt") { types.append(srt) }
-        if let vtt = UTType(filenameExtension: "vtt") { types.append(vtt) }
-        panel.allowedContentTypes = types
-
-        guard panel.runModal() == .OK, let dest = panel.url else { return }
-
-        let body: String
-        switch dest.pathExtension.lowercased() {
-        case "srt": body = TranscriptExporter.srt(transcript)
-        case "vtt": body = TranscriptExporter.vtt(transcript)
-        default:    body = TranscriptExporter.text(transcript)
-        }
-
-        do {
-            try body.write(to: dest, atomically: true, encoding: .utf8)
-        } catch {
-            let alert = NSAlert()
-            alert.messageText = "Couldn't save transcript"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.runModal()
-        }
+        TranscriptSavePanel(transcript: transcript).run()
     }
 }
