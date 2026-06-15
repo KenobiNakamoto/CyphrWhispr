@@ -174,4 +174,153 @@ final class TranscriptExporterTests: XCTestCase {
         XCTAssertEqual(TranscriptExporter.text(t), "Hello there.")
         XCTAssertEqual(TranscriptExporter.text(t), t.plainText)
     }
+
+    // MARK: - Timestamped text + silence
+
+    /// A >1s gap between two segments produces a silence line between them,
+    /// carrying the real gap length in parentheses.
+    func testTimestampedTextMarksGapBetweenSegments() {
+        let t = FileTranscript(
+            sourceURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+            durationSeconds: 14,
+            segments: [
+                .init(start: 0, end: 5, text: "Hello and welcome."),
+                .init(start: 8, end: 14, text: "Now we continue."),
+            ]
+        )
+        let body = TranscriptExporter.timestampedText(t)
+        XCTAssertTrue(body.contains("[00:00 → 00:05]  Hello and welcome."))
+        XCTAssertTrue(body.contains("[00:05 → 00:08]  — silence (3.0s) —"))
+        XCTAssertTrue(body.contains("[00:08 → 00:14]  Now we continue."))
+    }
+
+    /// A sub-threshold gap (<1s) produces no silence line — the segments sit
+    /// back-to-back.
+    func testTimestampedTextIgnoresSubThresholdGap() {
+        let t = FileTranscript(
+            sourceURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+            durationSeconds: 4,
+            segments: [
+                .init(start: 0, end: 2, text: "First."),
+                .init(start: 2.5, end: 4, text: "Second."),
+            ]
+        )
+        XCTAssertFalse(TranscriptExporter.timestampedText(t).contains("silence"))
+    }
+
+    /// Leading silence — a first word that starts >1s in gets a silence line
+    /// covering 0:00 → firstStart.
+    func testTimestampedTextMarksLeadingSilence() {
+        let t = FileTranscript(
+            sourceURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+            durationSeconds: 10,
+            segments: [.init(start: 4, end: 10, text: "Late start.")]
+        )
+        XCTAssertTrue(
+            TranscriptExporter.timestampedText(t)
+                .hasPrefix("[00:00 → 00:04]  — silence (4.0s) —")
+        )
+    }
+
+    /// Trailing silence — a last word that ends >1s before the file's end
+    /// gets a silence line covering lastEnd → duration.
+    func testTimestampedTextMarksTrailingSilence() {
+        let t = FileTranscript(
+            sourceURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+            durationSeconds: 12,
+            segments: [.init(start: 0, end: 5, text: "Early finish.")]
+        )
+        XCTAssertTrue(
+            TranscriptExporter.timestampedText(t)
+                .contains("[00:05 → 00:12]  — silence (7.0s) —")
+        )
+    }
+
+    /// A file with no transcribed speech collapses to a single whole-file
+    /// silence span (instrumental track, dead air).
+    func testTimestampedTextNoSpeechIsWholeFileSilence() {
+        let t = FileTranscript(sourceURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+                               durationSeconds: 30,
+                               segments: [])
+        XCTAssertEqual(TranscriptExporter.timestampedText(t),
+                       "[00:00 → 00:30]  — silence (30.0s) —\n")
+    }
+
+    /// No speech AND a sub-threshold duration → empty output (nothing worth
+    /// marking).
+    func testTimestampedTextNoSpeechShortIsEmpty() {
+        let t = FileTranscript(sourceURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+                               durationSeconds: 0.5,
+                               segments: [])
+        XCTAssertEqual(TranscriptExporter.timestampedText(t), "")
+    }
+
+    /// Overlapping / out-of-order segment ends never produce a negative
+    /// silence — the cursor never walks backwards.
+    func testTimestampedTextHandlesOverlappingSegments() {
+        let t = FileTranscript(
+            sourceURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+            durationSeconds: 6,
+            segments: [
+                .init(start: 0, end: 4, text: "Long one."),
+                .init(start: 2, end: 6, text: "Overlaps."),
+            ]
+        )
+        let body = TranscriptExporter.timestampedText(t)
+        XCTAssertFalse(body.contains("silence"))
+        XCTAssertTrue(body.contains("Long one."))
+        XCTAssertTrue(body.contains("Overlaps."))
+    }
+
+    /// The parenthesised silence duration preserves the real gap even when
+    /// the rounded endpoints look like a smaller gap — a 1.4s pause reads
+    /// "(1.4s)" though its endpoints round to 00:05 → 00:06.
+    func testTimestampedTextSilenceDurationKeepsSubSecondGap() {
+        let t = FileTranscript(
+            sourceURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+            durationSeconds: 10,
+            segments: [
+                .init(start: 0, end: 5.0, text: "Before."),
+                .init(start: 6.4, end: 10, text: "After."),
+            ]
+        )
+        XCTAssertTrue(
+            TranscriptExporter.timestampedText(t).contains("— silence (1.4s) —")
+        )
+    }
+
+    // MARK: - clockTimestamp
+
+    /// MM:SS under an hour, H:MM:SS past it; negatives clamp to zero.
+    func testClockTimestampFormat() {
+        XCTAssertEqual(TranscriptExporter.clockTimestamp(0),    "00:00")
+        XCTAssertEqual(TranscriptExporter.clockTimestamp(65),   "01:05")
+        XCTAssertEqual(TranscriptExporter.clockTimestamp(3661), "1:01:01")
+        XCTAssertEqual(TranscriptExporter.clockTimestamp(-5),   "00:00")
+    }
+
+    // MARK: - Export-format metadata
+
+    /// The two text formats share the `.txt` extension (the reason the save
+    /// panel needs a custom format popup); the subtitle formats don't.
+    func testExportFormatExtensions() {
+        XCTAssertEqual(TranscriptExportFormat.plainText.fileExtension,       "txt")
+        XCTAssertEqual(TranscriptExportFormat.timestampedText.fileExtension, "txt")
+        XCTAssertEqual(TranscriptExportFormat.srt.fileExtension,             "srt")
+        XCTAssertEqual(TranscriptExportFormat.vtt.fileExtension,             "vtt")
+    }
+
+    /// Each format's `render` routes to the matching exporter — spot-check by
+    /// the distinguishing marker of each output.
+    func testExportFormatRenderRoutesToExporter() {
+        let t = FileTranscript(
+            sourceURL: URL(fileURLWithPath: "/tmp/x.mp3"),
+            durationSeconds: 2.5,
+            segments: [.init(start: 0, end: 2.5, text: "Hi.")]
+        )
+        XCTAssertEqual(TranscriptExportFormat.plainText.render(t), "Hi.")
+        XCTAssertTrue(TranscriptExportFormat.timestampedText.render(t).contains("[00:00 → 00:02]  Hi."))
+        XCTAssertTrue(TranscriptExportFormat.srt.render(t).hasPrefix("1\n"))
+        XCTAssertTrue(TranscriptExportFormat.vtt.render(t).hasPrefix("WEBVTT"))
+    }
 }
