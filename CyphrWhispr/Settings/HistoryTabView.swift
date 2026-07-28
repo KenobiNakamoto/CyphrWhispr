@@ -540,27 +540,56 @@ private struct DayGroup: Identifiable {
     let records: [HistoryRecord]
 }
 
+// MARK: - Transcript height probes
+
+/// Laid-out height of the transcript rendered with NO line limit.
+private struct FullTextHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Laid-out height of the transcript clamped to the collapsed line limit.
+private struct ClampedTextHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 // MARK: - Entry row
 
-/// One transcription inside a day card. Up to four lines of transcript, then
-/// a metadata line (time · source app · length). A copy button fades in on
-/// hover and copies the *full* text — the visible transcript is truncated.
+/// One transcription inside a day card. Collapsed it shows up to four lines of
+/// transcript; a "More" control (shown only when the text is actually clipped)
+/// expands it inline to its full height — the row, its day card, and the scroll
+/// content all grow to fit, since nothing in the chain imposes a fixed height.
+/// A copy button fades in on hover and always copies the *full* text.
 private struct HistoryRow: View {
     let record: HistoryRecord
     let isLast: Bool
 
     @State private var hovering = false
     @State private var copied = false
+    @State private var isExpanded = false
+
+    // Heights of the transcript rendered unclamped vs. clamped to the collapsed
+    // line limit, measured by hidden probes. Their difference is how we know the
+    // text is truncated — and thus whether to offer the More/Less control —
+    // independently of the current expand state.
+    @State private var fullTextHeight: CGFloat = 0
+    @State private var clampedTextHeight: CGFloat = 0
+
+    /// Lines shown before the transcript is clipped in its collapsed state.
+    private static let collapsedLineLimit = 4
+
+    /// True when the collapsed clamp would hide part of the transcript. The
+    /// 1pt margin absorbs sub-pixel rounding between the two measurements.
+    private var isTruncated: Bool { fullTextHeight > clampedTextHeight + 1 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(record.text)
-                .font(CWFont.mono(size: CWFont.s13, weight: .regular))
-                .foregroundColor(.cwFg1)
-                .lineLimit(4)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            transcriptText
 
             HStack(spacing: 8) {
                 Text(Self.timeFormatter.string(from: record.createdAt))
@@ -573,6 +602,9 @@ private struct HistoryRow: View {
                     .font(CWFont.mono(size: CWFont.s10, weight: .regular))
                     .foregroundColor(.cwFg3)
                 Spacer(minLength: 0)
+                if isTruncated {
+                    expandToggle
+                }
                 if hovering || copied {
                     copyButton
                 }
@@ -589,6 +621,62 @@ private struct HistoryRow: View {
         }
         .onHover { hovering = $0 }
         .contentShape(Rectangle())
+        .animation(.cwMain, value: isExpanded)
+    }
+
+    /// The transcript itself: clamped to `collapsedLineLimit` lines until the
+    /// user expands it. Hidden probes behind it measure the clamped and full
+    /// heights so `isTruncated` can decide whether the More control is needed.
+    private var transcriptText: some View {
+        Text(record.text)
+            .font(CWFont.mono(size: CWFont.s13, weight: .regular))
+            .foregroundColor(.cwFg1)
+            .lineLimit(isExpanded ? nil : Self.collapsedLineLimit)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(measurementProbes)
+            .onPreferenceChange(FullTextHeightKey.self) { fullTextHeight = $0 }
+            .onPreferenceChange(ClampedTextHeightKey.self) { clampedTextHeight = $0 }
+    }
+
+    /// Two hidden copies of the transcript — one unclamped, one clamped to the
+    /// collapsed limit — each reporting its laid-out height via a preference.
+    /// They sit in the `.background` of the visible text so they inherit its
+    /// width (identical wrapping) without affecting layout: `.fixedSize` lets
+    /// them take their true height, overflow is invisible, and `.hidden()`
+    /// keeps them off-screen.
+    private var measurementProbes: some View {
+        ZStack {
+            heightProbe(lineLimit: nil, key: FullTextHeightKey.self)
+            heightProbe(lineLimit: Self.collapsedLineLimit, key: ClampedTextHeightKey.self)
+        }
+        .hidden()
+        .allowsHitTesting(false)
+    }
+
+    private func heightProbe<K: PreferenceKey>(lineLimit: Int?, key: K.Type) -> some View
+        where K.Value == CGFloat {
+        Text(record.text)
+            .font(CWFont.mono(size: CWFont.s13, weight: .regular))
+            .lineLimit(lineLimit)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: key, value: proxy.size.height)
+            })
+    }
+
+    private var expandToggle: some View {
+        Button {
+            isExpanded.toggle()
+        } label: {
+            Text(isExpanded ? "[ LESS ]" : "[ MORE ]")
+                .font(CWFont.mono(size: CWFont.s10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundColor(.cwFg2)
+        }
+        .buttonStyle(.plain)
     }
 
     private var copyButton: some View {
