@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Not pinned to a specific Xcode_<version>.app — GitHub rotates the
       # runner images, and a hard pin turns an image update into a failed
