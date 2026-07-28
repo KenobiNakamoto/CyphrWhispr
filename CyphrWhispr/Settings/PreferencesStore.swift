@@ -100,6 +100,29 @@ final class PreferencesStore: ObservableObject {
         didSet {
             guard activeModelID != oldValue else { return }
             UserDefaults.standard.set(activeModelID, forKey: Key.activeModelID)
+            // Crossing into a multilingual model while the language picker
+            // is still pinned to "en" silently breaks dictation: the engine
+            // gets `language: "en"` from `effectiveLanguageCode` and decodes
+            // any audio (Spanish, Japanese, …) AS IF it were English, which
+            // produces English-shaped gibberish — the most common
+            // "multilingual is broken" report. Two ways this state happens:
+            //   • The previous model was an .en variant. The picker was
+            //     disabled there and `selectedLanguageCode` stayed at "en"
+            //     (its fresh-install default in earlier builds), so the
+            //     user had no opportunity to choose Auto-detect.
+            //   • Pre-fix upgrade path: an old install where the picker
+            //     defaulted to "en" before this fix existed.
+            // Resolution: flip the language to Auto-detect at the moment
+            // we cross into a multilingual variant. The user keeps full
+            // control — the picker is now enabled in Settings → General
+            // and they can re-pin English (or any code) explicitly. The
+            // cost of being slightly wrong here is one extra click; the
+            // cost of leaving it broken is "multilingual doesn't work".
+            if let new = ModelCatalog.model(id: activeModelID),
+               new.isMultilingual,
+               selectedLanguageCode == "en" {
+                selectedLanguageCode = TranscriptionLanguageMode.autoCode
+            }
             // Broadcast so cross-cutting listeners (PillWindowController
             // for the spawn animation reset) can react without a tight
             // Combine binding back into the prefs store.
@@ -420,6 +443,29 @@ final class PreferencesStore: ObservableObject {
             return "en"
         }
         return selectedLanguageCode
+    }
+
+    /// Language to use when transcribing a *dropped file*, as opposed to live
+    /// dictation. These are deliberately decoupled: a live session inherits
+    /// `selectedLanguageCode` because the user just picked the language they're
+    /// about to speak, but a file carries no such hint — its language is
+    /// unknown to the app and unrelated to whatever dictation is pinned to.
+    ///
+    /// So on any multilingual model we default a file to **auto-detect** and
+    /// let Whisper's language-ID head read it off the audio. Inheriting the
+    /// dictation pin here is the exact cause of the classic "I dropped a
+    /// Spanish recording and got English-shaped gibberish" report: the pin is
+    /// `"en"` (its historical default), `effectiveLanguageCode` forwards it,
+    /// and the decoder is told to read Spanish AS English.
+    ///
+    /// English-only (`.en`) models still force `"en"` — they have no other
+    /// language token to emit. The result window layers a per-file override on
+    /// top of this default so a mis-detect is one click to correct.
+    var fileTranscriptionDefaultLanguageCode: String {
+        guard let model = ModelCatalog.model(id: activeModelID), model.isMultilingual else {
+            return "en"
+        }
+        return TranscriptionLanguageMode.autoCode
     }
 
     /// True when the active model variant is multilingual — i.e. the

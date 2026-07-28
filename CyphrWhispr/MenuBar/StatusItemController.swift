@@ -292,11 +292,31 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // MARK: Section 3 — model + switcher submenu
 
     private func addModelSection(to menu: NSMenu) {
-        let activeID = PreferencesStore.shared.activeModelID
+        let prefs = PreferencesStore.shared
+        let activeID = prefs.activeModelID
         let activeName = ModelCatalog.model(id: activeID)?.displayName ?? activeID
         let header = NSMenuItem(title: "Model: \(activeName)", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
+
+        // Language row — shows what language code the engine will actually
+        // use for the next session (i.e. `effectiveLanguageCode`, not just
+        // the raw picker value). Surfacing it here closes the silent-
+        // mismatch loophole where a user on a multilingual model still has
+        // English pinned in Settings → General and can't tell why
+        // dictation in another language reads as gibberish. Click jumps
+        // straight to General so they can change it without hunting.
+        let langCode = prefs.effectiveLanguageCode
+        let langName = Self.menuLanguageName(for: langCode,
+                                             rawPick: prefs.selectedLanguageCode)
+        let langItem = NSMenuItem(
+            title: "Language: \(langName)",
+            action: #selector(openLanguageSettings),
+            keyEquivalent: ""
+        )
+        langItem.target = self
+        langItem.toolTip = "Click to change the dictation language"
+        menu.addItem(langItem)
 
         let switcherItem = NSMenuItem(title: "Switch model", action: nil, keyEquivalent: "")
         let switcherSubmenu = NSMenu(title: "Switch model")
@@ -393,6 +413,40 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             forKey: "cw.settings.tab"
         )
         SettingsWindowController.shared.show()
+    }
+
+    /// Same pattern but for the General tab — the menu's "Language: <name>"
+    /// row lands here so the user can change the dictation language picker
+    /// without hunting through Settings.
+    @objc private func openLanguageSettings() {
+        UserDefaults.standard.set(
+            "General",
+            forKey: "cw.settings.tab"
+        )
+        SettingsWindowController.shared.show()
+    }
+
+    /// Display string for the "Language:" menu row. `effectiveLanguageCode`
+    /// is what the engine actually receives, but on an .en-only model that
+    /// always reads as plain "English" regardless of `rawPick` — so we add
+    /// a parenthetical note in that case to make the override visible
+    /// ("English (model is English-only)") rather than letting the user
+    /// believe they personally picked English when in fact the model is
+    /// forcing it.
+    private static func menuLanguageName(for effectiveCode: String,
+                                         rawPick: String) -> String {
+        if effectiveCode == TranscriptionLanguageMode.autoCode
+            || effectiveCode == TranscriptionLanguageMode.autoPerPhraseCode {
+            return "Auto-detect"
+        }
+        let display = TranscriptionLanguageCatalog.language(for: effectiveCode)?
+            .displayName ?? effectiveCode.uppercased()
+        // Forced override by the model gate: the user's picker may say
+        // something else, but the active .en model overrules to "en".
+        if effectiveCode == "en" && rawPick != effectiveCode {
+            return "\(display) (English-only model)"
+        }
+        return display
     }
 
     @objc private func copyLastTranscriptTapped() {
