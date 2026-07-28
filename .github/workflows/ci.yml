@@ -13,7 +13,12 @@ concurrency:
 jobs:
   build-and-test:
     name: Build & Test (macOS)
-    runs-on: macos-14
+    # macos-15, not macos-14. XcodeGen installed fresh from Homebrew emits an
+    # Xcode 16-era project format (objectVersion 77); the Xcode 15.x on the
+    # macos-14 image refuses to open it with "a future Xcode project file
+    # format". Since .xcodeproj is generated on every run, the runner's Xcode
+    # has to be at least as new as whatever XcodeGen produces.
+    runs-on: macos-15
     timeout-minutes: 25
 
     steps:
@@ -79,7 +84,7 @@ jobs:
 
   lint:
     name: Lint (SwiftFormat + SwiftLint)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 10
     # Advisory until the repo carries lint configuration. There is no
     # .swiftlint.yml or .swiftformat in-tree, so both tools would run their
