@@ -67,6 +67,14 @@ actor WhisperKitBackend: WhisperEngine {
     /// on the next transcribe, locks English until the next commit.
     private var sessionLockedLanguage: String?
 
+    /// Optional UI callback for download progress. Stored as a plain
+    /// `@Sendable` closure that internally hops to the main actor — that
+    /// way the protocol's `@MainActor` contract is honoured even though
+    /// WhisperKit's progress callback fires from a URLSession background
+    /// thread. Set via `setDownloadProgressHandler(_:)` once at app start;
+    /// nil means "no UI listening, just download silently".
+    private var downloadProgressHandler: (@Sendable (Double) -> Void)?
+
     /// Audio is captured at 16 kHz mono Float32 by `AudioCaptureEngine`.
     private static let sampleRateHz: TimeInterval = 16_000
 
@@ -122,14 +130,49 @@ actor WhisperKitBackend: WhisperEngine {
     /// own Application Support folder so we (a) survive Caches eviction and
     /// (b) can show the user what's downloaded.
     ///
-    /// `modelFolder` is set only when the variant is already on disk. If we
-    /// passed it for a not-yet-downloaded model, WhisperKit's `setupModels`
-    /// would skip the download step (it treats a non-nil `modelFolder` as
-    /// "user provided a local model, don't download"), then fail when looking
-    /// for the absent .mlmodelc files.
+    /// Two-phase when the variant isn't cached:
+    ///   1. **Download** via `WhisperKit.download(...)` with a progress
+    ///      callback so the menu-bar pill can render `XX% downloaded` while
+    ///      the bytes are coming over the wire. We deliberately do this OUT
+    ///      OF BAND from the `WhisperKitConfig` constructor (which CAN
+    ///      download but does so silently with no progress surface) because
+    ///      "the model is loading" with no feedback is the single most-
+    ///      reported UX issue when the first-launch fallback isn't the
+    ///      user's pick.
+    ///   2. **Open** the just-downloaded folder via a `WhisperKitConfig`
+    ///      with `download: false` and `modelFolder` set, so the constructor
+    ///      doesn't try to redownload what we just fetched.
+    ///
+    /// When the variant IS cached, we skip phase 1 entirely and just hand
+    /// the path to `WhisperKitConfig` (with `download: false` as a belt-and-
+    /// braces guard against accidental re-fetch).
     private func load(modelName: String) async throws {
-        let isCached = AppSupportPaths.isModelDownloaded(modelName)
-        let localFolder: String? = isCached ? AppSupportPaths.modelURL(for: modelName).path : nil
+        let localFolder: String
+        if AppSupportPaths.isModelDownloaded(modelName) {
+            localFolder = AppSupportPaths.modelURL(for: modelName).path
+        } else {
+            // Snapshot the handler so the closure capture is non-isolated
+            // (the actor's stored property can't be read from inside a
+            // `@Sendable` closure that escapes us).
+            let handler = downloadProgressHandler
+            do {
+                let downloadedURL = try await WhisperKit.download(
+                    variant: modelName,
+                    downloadBase: AppSupportPaths.downloadBase,
+                    useBackgroundSession: false,
+                    from: AppSupportPaths.whisperKitRepo,
+                    progressCallback: { progress in
+                        // `Progress` itself isn't strictly Sendable; pull
+                        // the Double out before crossing actor boundaries.
+                        let fraction = progress.fractionCompleted
+                        handler?(fraction)
+                    }
+                )
+                localFolder = downloadedURL.path
+            } catch {
+                throw WhisperBackendError.modelLoadFailed(error)
+            }
+        }
 
         do {
             let config = WhisperKitConfig(
@@ -140,11 +183,38 @@ actor WhisperKitBackend: WhisperEngine {
                 logLevel: .error,
                 prewarm: true,
                 load: true,
-                download: true
+                // We've already downloaded (or confirmed cached). Forbid
+                // the silent path so a misconfigured `modelFolder` can't
+                // accidentally trigger a no-progress download here.
+                download: false
             )
             pipe = try await WhisperKit(config)
         } catch {
             throw WhisperBackendError.modelLoadFailed(error)
+        }
+    }
+
+    /// Install (or remove) the progress callback used during model
+    /// downloads. The argument is `@MainActor`-isolated for safe UI use;
+    /// internally we wrap it in a `@Sendable` closure that hops via a
+    /// detached `Task { @MainActor in ... }` because the underlying
+    /// WhisperKit progress callback fires from a URLSession background
+    /// queue, not the main actor.
+    ///
+    /// Idempotent — call once at app start to install, or pass `nil` to
+    /// detach (we don't currently do the latter, but the contract supports
+    /// it).
+    func setDownloadProgressHandler(_ handler: (@MainActor @Sendable (Double) -> Void)?) {
+        if let handler {
+            self.downloadProgressHandler = { fraction in
+                // Hop back to main so the UI-isolated handler can run.
+                // `Task { @MainActor in ... }` is the cheapest correct way
+                // to satisfy the isolation contract without forcing the
+                // entire HubApi callback path onto the main thread.
+                Task { @MainActor in handler(fraction) }
+            }
+        } else {
+            self.downloadProgressHandler = nil
         }
     }
 

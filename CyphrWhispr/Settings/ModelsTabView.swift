@@ -13,6 +13,28 @@ import AppKit
 struct ModelsTabView: View {
     @EnvironmentObject private var prefs: PreferencesStore
     @StateObject private var manager = ModelInventory()
+    /// Observe the in-flight download so we can refresh the on-disk
+    /// inventory the moment a download finishes — that way a row's button
+    /// transitions cleanly from "100% Downloaded" → "In use" without
+    /// requiring the user to leave and re-enter the tab. Rows themselves
+    /// observe the store directly for the live percentage display.
+    @ObservedObject private var downloads = ModelDownloadStore.shared
+
+    /// Toggled by the `[ EDIT ]` / `[ DONE ]` button in the Installed
+    /// card's header. While true, every downloaded-but-not-active row
+    /// trades its `[ › SWITCH ]` action button for a destructive
+    /// `[ ✕ DELETE ]` — the only place in Settings where rows turn
+    /// destructive, so we gate it behind an explicit mode flip rather
+    /// than offering a permanent trash icon.
+    @State private var isEditing = false
+
+    /// The row whose delete button was just tapped — the source of the
+    /// confirmation alert. `nil` when no alert is on screen. We hold the
+    /// full `ModelInventory.Row` rather than just the ID so the message
+    /// can show display name + disk size + footer detail without
+    /// re-looking-up the row mid-deletion (the inventory refreshes after
+    /// a successful delete, which would invalidate a stale ID lookup).
+    @State private var rowPendingDeletion: ModelInventory.Row?
 
     private let profile = HardwareProfiler.profile()
 
@@ -24,18 +46,45 @@ struct ModelsTabView: View {
                     subtitle: "Apple-Silicon-accelerated Whisper variants. We picked one that fits your Mac on first launch — switch any time."
                 )
 
-                Card3(title: "Installed", meta: "\(manager.rows.count) variants") {
-                    ForEach(Array(manager.rows.enumerated()), id: \.element.id) { index, row in
-                        ModelRow3(
-                            row: row,
-                            recommendedID: ModelRecommender.recommend(for: profile).id,
-                            isActive: prefs.activeModelID == row.id,
-                            isLast: index == manager.rows.count - 1,
-                            onSelect: { prefs.activeModelID = row.id },
-                            onDelete: { manager.delete(row) }
-                        )
+                Card3(
+                    title: "Installed",
+                    meta: "\(manager.rows.count) variants",
+                    content: {
+                        ForEach(Array(manager.rows.enumerated()), id: \.element.id) { index, row in
+                            ModelRow3(
+                                row: row,
+                                recommendedID: ModelRecommender.recommend(for: profile).id,
+                                isActive: prefs.activeModelID == row.id,
+                                isLast: index == manager.rows.count - 1,
+                                isEditing: isEditing,
+                                onSelect: { prefs.activeModelID = row.id },
+                                onRequestDelete: { rowPendingDeletion = row }
+                            )
+                        }
+                    },
+                    headerTrailing: {
+                        // The Edit/Done toggle. Renders as a small
+                        // bracketed glass button matching the bracketed
+                        // action buttons inside the rows — visual
+                        // consistency over a system-style "Edit" link.
+                        // `.ghost` variant gives a subtle translucent
+                        // chip that reads as a control without
+                        // competing with the row-level primary buttons.
+                        CWButton(
+                            title: isEditing ? "Done" : "Edit",
+                            variant: isEditing ? .primary : .ghost,
+                            indicator: .none
+                        ) {
+                            // Toggle in place. If the user closes Edit
+                            // mode mid-confirmation, the alert closes
+                            // too — leaving a dangling alert with no
+                            // affordance back into edit mode would feel
+                            // broken.
+                            isEditing.toggle()
+                            if !isEditing { rowPendingDeletion = nil }
+                        }
                     }
-                }
+                )
 
                 Card3(title: "Custom models") {
                     Row3(label: "Import",
@@ -66,6 +115,47 @@ struct ModelsTabView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear { manager.refresh() }
+        // Re-scan disk the moment a download finishes (currentModelID
+        // transitions back to nil). Without this, the row's cached
+        // `isDownloaded` flag stays stale until the user leaves and
+        // re-enters the tab — and "100% Downloaded" would then visibly
+        // sit there for several extra seconds instead of becoming
+        // "In use" right away.
+        .onChange(of: downloads.currentModelID) { oldValue, newValue in
+            if oldValue != nil && newValue == nil {
+                manager.refresh()
+            }
+        }
+        // Delete-confirmation alert. Anchored to the view root so the
+        // dialog renders centred over the Settings window regardless of
+        // which row triggered it — alerts attached deeper in the row
+        // hierarchy can position oddly when the row scrolls off-screen
+        // mid-presentation. `presenting:` carries the row data into the
+        // closures so we don't have to hold a separate name/size copy.
+        .alert(
+            "Delete \(rowPendingDeletion?.displayName ?? "model")?",
+            isPresented: Binding(
+                get: { rowPendingDeletion != nil },
+                set: { isPresented in
+                    if !isPresented { rowPendingDeletion = nil }
+                }
+            ),
+            presenting: rowPendingDeletion
+        ) { row in
+            Button("Cancel", role: .cancel) {
+                rowPendingDeletion = nil
+            }
+            Button("Delete", role: .destructive) {
+                manager.delete(row)
+                rowPendingDeletion = nil
+            }
+        } message: { row in
+            let size = ByteCountFormatter.string(
+                fromByteCount: row.diskBytes,
+                countStyle: .file
+            )
+            Text("Removing \(row.displayName) frees \(size) of disk space. You can re-download it from this list at any time.")
+        }
     }
 }
 
@@ -82,10 +172,27 @@ private struct ModelRow3: View {
     let recommendedID: String
     let isActive: Bool
     let isLast: Bool
+    /// Whether the Installed card is currently in Edit mode. When true,
+    /// downloaded non-active rows swap their `[ › SWITCH ]` action button
+    /// for a destructive `[ ✕ DELETE ]` that routes through `onRequestDelete`
+    /// → confirmation alert → `manager.delete(...)`.
+    let isEditing: Bool
     let onSelect: () -> Void
-    let onDelete: () -> Void
+    /// Tapped on the delete button while in Edit mode. The parent uses
+    /// this to populate `rowPendingDeletion`, which presents the
+    /// confirmation alert. We never delete from inside the row —
+    /// confirmation lives at the view-root so it doesn't get torn down
+    /// by the row's own removal on disk-refresh.
+    let onRequestDelete: () -> Void
 
     @EnvironmentObject private var prefs: PreferencesStore
+    /// Observe the shared download register. When this row's variant is
+    /// being fetched, swap the trailing action button from
+    /// `Download`/`Switch`/`In use` to a live `XX% Downloaded` label.
+    /// Other rows' buttons are unaffected because `downloads.currentModelID`
+    /// is a single optional — the equality check in `actionButton` only
+    /// matches the one row that's actually downloading.
+    @ObservedObject private var downloads = ModelDownloadStore.shared
     @State private var hovering = false
 
     var body: some View {
@@ -111,11 +218,23 @@ private struct ModelRow3: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
+        // Tap-to-switch only outside edit mode. Inside edit mode, taps
+        // on the row body are intentionally inert — clicking should not
+        // promote a model to active when the user's intent is deletion.
+        // The dedicated `[ ✕ DELETE ]` button is the only affordance.
+        .onTapGesture { if !isEditing { onSelect() } }
         .onHover { hovering = $0 }
+        // Right-click context menu is kept as a power-user shortcut for
+        // "Remove download" — same destructive action, same active-model
+        // gate, just without the Edit-mode toggle ceremony. Routes
+        // through the parent's confirmation alert by way of
+        // `onRequestDelete`, so the right-click path benefits from the
+        // same "are you sure?" guard as the Edit-mode button.
         .contextMenu {
             if row.isDownloaded && !isActive {
-                Button("Remove download", role: .destructive, action: onDelete)
+                Button("Remove download", role: .destructive) {
+                    onRequestDelete()
+                }
             }
         }
     }
@@ -205,7 +324,28 @@ private struct ModelRow3: View {
     ]
 
     @ViewBuilder private var actionButton: some View {
-        if isActive {
+        // Downloading-this-variant check wins over every other state.
+        // The user clicked Download (or AppCoordinator routed a not-cached
+        // model through `switchModel(...)`), so the row is mid-fetch —
+        // every other label would lie about what's happening. Also wins
+        // over Edit mode: a download in flight should never be replaced
+        // by a delete button (it's not yet on disk to delete anyway).
+        if downloads.currentModelID == row.id {
+            let percent = Int((downloads.fraction * 100).rounded())
+            CWButton(title: "\(percent)% Downloaded",
+                     variant: .ghost) { }
+        } else if isEditing && row.isDownloaded && !isActive {
+            // Edit mode + this variant has bytes on disk + not the active
+            // pipeline → the delete button is the only thing that makes
+            // sense here. Active model stays at "In use" so the user
+            // can't accidentally pull the rug out from under a running
+            // dictation; non-downloaded rows just have nothing to delete.
+            CWButton(title: "Delete",
+                     variant: .danger,
+                     indicator: .glyph("✕")) {
+                onRequestDelete()
+            }
+        } else if isActive {
             CWButton(title: "In use", variant: .ghost) { }
         } else if !row.isDownloaded {
             CWButton(title: "Download",

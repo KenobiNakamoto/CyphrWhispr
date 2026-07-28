@@ -43,10 +43,26 @@ struct SectionHead3: View {
 //   3. Hairline cwBorder + a top-edge inner highlight blended with
 //      .plusLighter — the "concave glass" lift.
 
-struct Card3<Content: View>: View {
+struct Card3<Content: View, HeaderTrailing: View>: View {
     var title: String? = nil
     var meta: String?  = nil
-    @ViewBuilder var content: Content
+    let content: Content
+    let headerTrailing: HeaderTrailing
+
+    /// Primary initialiser — used when the card needs a custom trailing
+    /// accessory in its title bar (e.g. the "[ EDIT ]" toggle on the
+    /// Models → Installed card). The `meta` text still renders to the
+    /// left of the accessory, so the caller can show BOTH "5 VARIANTS"
+    /// and the button without rebuilding the header from scratch.
+    init(title: String? = nil,
+         meta: String? = nil,
+         @ViewBuilder content: () -> Content,
+         @ViewBuilder headerTrailing: () -> HeaderTrailing) {
+        self.title = title
+        self.meta = meta
+        self.content = content()
+        self.headerTrailing = headerTrailing()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,6 +77,7 @@ struct Card3<Content: View>: View {
                             .tracking(1.6)
                             .foregroundColor(.cwFg3)
                     }
+                    headerTrailing
                 }
                 .font(CWFont.mono(size: CWFont.s10, weight: .semibold))
                 .padding(.horizontal, 16)
@@ -94,6 +111,21 @@ struct Card3<Content: View>: View {
         .clipShape(RoundedRectangle(cornerRadius: CWRadius.lg))
         .shadow(color: .black.opacity(0.20), radius: 24, x: 0, y: 8)
         .padding(.bottom, CWSpace.s4)
+    }
+}
+
+/// Back-compat initialiser for the common case (no trailing accessory).
+/// Every existing `Card3(title: "X") { ... }` call site keeps working
+/// untouched — the generic `HeaderTrailing` is inferred as `EmptyView`,
+/// and the body's `headerTrailing` slot renders nothing.
+extension Card3 where HeaderTrailing == EmptyView {
+    init(title: String? = nil,
+         meta: String? = nil,
+         @ViewBuilder content: () -> Content) {
+        self.init(title: title,
+                  meta: meta,
+                  content: content,
+                  headerTrailing: { EmptyView() })
     }
 }
 

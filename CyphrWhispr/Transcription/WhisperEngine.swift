@@ -44,4 +44,15 @@ protocol WhisperEngine: AnyObject, Sendable {
 
     /// Mark the session complete and produce the final transcription.
     func finishStream() async throws -> String
+
+    /// Install a callback that fires periodically while a model variant is
+    /// being downloaded over the network (i.e. when `warmUp()` or
+    /// `loadModel(named:)` hits a variant that isn't cached yet). Argument
+    /// is the fraction completed in `[0, 1]`. Pass `nil` to remove.
+    ///
+    /// The handler is `@MainActor`-isolated because its only realistic
+    /// consumer is a UI surface — the menu-bar pill's progress text. Engines
+    /// that don't surface progress (or model loads that hit the local cache)
+    /// simply never invoke it.
+    func setDownloadProgressHandler(_ handler: (@MainActor @Sendable (Double) -> Void)?) async
 }

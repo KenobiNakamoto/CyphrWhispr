@@ -232,16 +232,49 @@ final class AppCoordinator {
             .sink { [weak self] state in self?.statusItem.update(for: state) }
             .store(in: &cancellables)
 
+        // Install the download-progress callback on the engine so the
+        // Settings → Models tab can surface per-row progress while a
+        // variant is fetching. The pill deliberately stays silent during
+        // downloads — per direct user direction, the "XX% downloaded"
+        // chrome lives only in the Models list, never in the dictation
+        // pill — so the handler has just one consumer:
+        // `ModelDownloadStore.shared`, which `ModelRow3` observes to swap
+        // its action button to "47% Downloaded" mid-flight.
+        Task { [whisper] in
+            await whisper.setDownloadProgressHandler { @MainActor @Sendable fraction in
+                ModelDownloadStore.shared.update(fraction)
+            }
+        }
+
         // Pre-warm WhisperKit in the background — first model compile is 30-90s
         // on Apple Silicon. We don't want the first hotkey press to look frozen.
+        //
+        // If the user's selected model isn't on disk yet (fresh install of a
+        // non-bundled variant, or model dir deleted out from under us), register
+        // the model with `ModelDownloadStore` BEFORE the warm-up Task fires so
+        // the Settings → Models row shows live percent the moment the user
+        // opens the panel. The dictation pill stays silent — see the handler
+        // wiring above.
         state = .loadingModel
+        let warmupNeedsDownload = !AppSupportPaths.isModelDownloaded(prefs.activeModelID)
+        if warmupNeedsDownload {
+            ModelDownloadStore.shared.begin(modelID: prefs.activeModelID)
+        }
         Task { [weak self] in
             guard let self else { return }
             do {
                 try await self.whisper.warmUp()
-                await MainActor.run { self.state = .idle }
+                await MainActor.run {
+                    if warmupNeedsDownload {
+                        ModelDownloadStore.shared.finish()
+                    }
+                    self.state = .idle
+                }
             } catch {
                 await MainActor.run {
+                    if warmupNeedsDownload {
+                        ModelDownloadStore.shared.finish()
+                    }
                     self.state = .error("Model load failed: \(error.localizedDescription)")
                     self.scheduleReturnToIdle()
                 }
@@ -323,14 +356,32 @@ final class AppCoordinator {
         // The user explicitly requested "only on first ever start";
         // subsequent model switches load silently with just the menubar
         // icon as feedback.
+        //
+        // If the variant isn't on disk yet, we register the download with
+        // `ModelDownloadStore` so the Settings → Models row swaps its
+        // action button to "47% Downloaded" while bytes stream in. The
+        // dictation pill stays silent during downloads by direct user
+        // direction — progress lives only in the Models list now.
         state = .loadingModel
+        let switchNeedsDownload = !AppSupportPaths.isModelDownloaded(modelID)
+        if switchNeedsDownload {
+            ModelDownloadStore.shared.begin(modelID: modelID)
+        }
         modelSwitchTask = Task { [weak self] in
             guard let self else { return }
             do {
                 try await self.whisper.loadModel(named: modelID)
-                await MainActor.run { self.state = .idle }
+                await MainActor.run {
+                    if switchNeedsDownload {
+                        ModelDownloadStore.shared.finish()
+                    }
+                    self.state = .idle
+                }
             } catch {
                 await MainActor.run {
+                    if switchNeedsDownload {
+                        ModelDownloadStore.shared.finish()
+                    }
                     self.state = .error("Model load failed: \(error.localizedDescription)")
                     self.scheduleReturnToIdle()
                 }
