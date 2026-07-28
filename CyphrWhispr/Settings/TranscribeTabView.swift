@@ -179,7 +179,15 @@ struct TranscribeTabView: View {
                         CWButton(title: "Reopen",
                                  variant: .ghost,
                                  indicator: .glyph("↻")) {
-                            TranscriptResultWindowController.shared.showNewWindow(for: entry.sourceURL)
+                            // Prefer the saved transcript — instant, no re-run.
+                            // Fall back to re-transcribing the source file only
+                            // for entries with no archive (failures, or entries
+                            // recorded before transcript archiving shipped).
+                            if let saved = recents.archivedTranscript(for: entry) {
+                                TranscriptResultWindowController.shared.showSavedWindow(transcript: saved)
+                            } else {
+                                TranscriptResultWindowController.shared.showNewWindow(for: entry.sourceURL)
+                            }
                         }
                     }
                 }

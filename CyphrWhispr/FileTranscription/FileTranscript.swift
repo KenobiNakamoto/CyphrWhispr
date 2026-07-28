@@ -7,7 +7,13 @@ import Foundation
 /// the result is a frozen value that travels into the UI without further
 /// coordination with the engine. Carrying the segments (not just the text)
 /// is what lets us emit SRT/VTT exports on top of the plain text.
-struct FileTranscript: Sendable, Equatable {
+/// `Codable` so a completed transcript can be archived to disk (see
+/// `TranscriptArchive`) and reloaded instantly on "Reopen" instead of being
+/// re-derived by running the source audio back through Whisper. The compiler
+/// synthesises `Codable` over the stored properties; the derived `plainText` /
+/// `sourceFilename` round-trip as stored values (they stay consistent because
+/// we only ever encode what the designated init already computed).
+struct FileTranscript: Sendable, Equatable, Codable {
     /// User-readable filename (no path). Used as the result-window title and
     /// the default basename when the user picks Save as…
     let sourceFilename: String
@@ -31,7 +37,7 @@ struct FileTranscript: Sendable, Equatable {
     /// window text view doesn't recompute on every redraw.
     let plainText: String
 
-    struct Segment: Sendable, Equatable {
+    struct Segment: Sendable, Equatable, Codable {
         let start: TimeInterval
         let end: TimeInterval
         let text: String

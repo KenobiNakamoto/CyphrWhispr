@@ -35,16 +35,53 @@ final class TranscriptResultWindowController {
     private init() {}
 
     /// Open a fresh result window for the file at `url`. Pulls the active
-    /// model and effective language code out of `PreferencesStore` so the
-    /// file path uses whatever the user picked for live dictation. Phase C
-    /// will add a per-file override surface in the Settings tab.
+    /// model out of `PreferencesStore`, and seeds the language to the
+    /// file-transcription default (auto-detect on a multilingual model rather
+    /// than the live-dictation pin — see `fileTranscriptionDefaultLanguageCode`).
+    /// The result window exposes a per-file language picker that calls
+    /// `service.retranscribe(languageCode:)` to override this seed.
     func showNewWindow(for url: URL) {
         let prefs = PreferencesStore.shared
         let service = FileTranscriptionService(
             sourceURL: url,
             modelName: prefs.activeModelID,
-            languageCode: prefs.effectiveLanguageCode
+            languageCode: prefs.fileTranscriptionDefaultLanguageCode
         )
+        present(service: service, sourceURL: url)
+    }
+
+    /// Reopen a previously-saved transcript instantly — no decode, no Whisper
+    /// run. The service is seeded `.done` with the archived transcript, so the
+    /// window paints the saved text the moment it appears. The language picker
+    /// still works: overriding it decodes the source file and re-runs (the only
+    /// case that re-reads the audio).
+    func showSavedWindow(transcript: FileTranscript) {
+        let prefs = PreferencesStore.shared
+        let service = FileTranscriptionService(
+            preloaded: transcript,
+            modelName: prefs.activeModelID,
+            languageCode: prefs.fileTranscriptionDefaultLanguageCode
+        )
+        present(service: service, sourceURL: transcript.sourceURL)
+    }
+
+    /// Shared window construction for both fresh and reopened transcripts. The
+    /// result view drives `service.start()` on appear; a preloaded (reopened)
+    /// service no-ops it because its status is already `.done`.
+    private func present(service: FileTranscriptionService, sourceURL url: URL) {
+        let prefs = PreferencesStore.shared
+
+        // Persist + mirror every genuine transcript the moment it lands:
+        //   1. Archive it into recents so "Reopen" is instant next time.
+        //   2. Mirror it into the encrypted History vault (no-op when History
+        //      is disabled) so it shows in the History tab + full-text search.
+        // Fires for the initial run and any language re-transcribe, but NOT for
+        // a preloaded reopen (its transcript is already saved).
+        service.onTranscribed = { transcript in
+            RecentTranscriptionsStore.shared.record(transcript)
+            HistoryService.shared.record(text: transcript.plainText,
+                                         sourceApp: transcript.sourceFilename)
+        }
 
         let id = UUID()
         let host = NSHostingController(
@@ -87,21 +124,21 @@ final class TranscriptResultWindowController {
             }
         }
 
-        // Record into the recents store the moment the service flips to its
-        // terminal state. Subscribed here, not on the view, because views
-        // come and go (the user might close the result window before the
-        // .done/.failed lands) and we want recents to capture the outcome
-        // either way.
+        // Record FAILURES the moment the service flips to its terminal failed
+        // state. Subscribed here, not on the view, because views come and go
+        // (the user might close the result window before the outcome lands) and
+        // we want recents to capture a failure either way. SUCCESS is recorded
+        // via `service.onTranscribed` instead — that path also archives the
+        // transcript and mirrors it into the History vault, and crucially does
+        // NOT fire for a preloaded reopen (whose transcript is already saved).
         let statusObserver = service.$status
             .receive(on: RunLoop.main)
             .sink { status in
                 switch status {
-                case .done(let transcript):
-                    RecentTranscriptionsStore.shared.record(transcript)
                 case .failed(let message):
                     RecentTranscriptionsStore.shared.recordFailure(url: url,
                                                                    message: message)
-                case .idle, .decoding, .transcribing:
+                case .idle, .decoding, .transcribing, .done:
                     break
                 }
             }

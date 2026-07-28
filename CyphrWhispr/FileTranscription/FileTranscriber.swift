@@ -82,7 +82,8 @@ actor FileTranscriber {
     func transcribe(samples: [Float],
                     sourceURL: URL,
                     durationSeconds: TimeInterval,
-                    languageCode: String) async throws -> FileTranscript {
+                    languageCode: String,
+                    progressHandler: (@Sendable (Double) -> Void)? = nil) async throws -> FileTranscript {
         guard let pipe else { throw FileTranscriberError.notLoaded }
 
         let isAuto = (languageCode == TranscriptionLanguageMode.autoCode
@@ -96,10 +97,28 @@ actor FileTranscriber {
             withoutTimestamps: false
         )
 
+        // Derive a transcription percentage from WhisperKit's segment-discovery
+        // callback. It fires per processed window with segments whose `end`
+        // timestamps are absolute in the full-audio timeline (seek-adjusted in
+        // `windowPostProcess`), so the furthest end we've seen, over the total
+        // duration, is a faithful "how much of the audio is transcribed" ratio.
+        // `total` is floored away from zero so a duration we somehow couldn't
+        // measure can't divide-by-zero (progress just pins to 1 immediately).
+        let total = max(durationSeconds, 0.0001)
+        let tracker = SegmentProgressTracker()
+        let segmentCallback: SegmentDiscoveryCallback? = progressHandler.map { handler in
+            { segments in
+                let latestEnd = segments.map { Double($0.end) }.max() ?? 0
+                handler(tracker.advance(toEnd: latestEnd, total: total))
+            }
+        }
+
         let results: [TranscriptionResult]
         do {
             results = try await pipe.transcribe(audioArray: samples,
-                                                decodeOptions: options)
+                                                decodeOptions: options,
+                                                callback: nil,
+                                                segmentCallback: segmentCallback)
         } catch {
             throw FileTranscriberError.transcribeFailed(error)
         }
@@ -118,5 +137,26 @@ actor FileTranscriber {
         return FileTranscript(sourceURL: sourceURL,
                               durationSeconds: durationSeconds,
                               segments: segments)
+    }
+}
+
+/// Monotonic tracker for transcription progress. WhisperKit may invoke the
+/// segment-discovery callback from concurrent workers and out of order, so we
+/// lock around the running maximum and never let the reported fraction go
+/// backwards — a progress bar that retreats reads as a bug even when the
+/// underlying windows genuinely finished out of sequence.
+///
+/// `@unchecked Sendable`: the only mutable state is guarded by the lock.
+private final class SegmentProgressTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var maxEnd: Double = 0
+
+    /// Fold in the latest window's furthest end time and return the clamped
+    /// `[0, 1]` fraction of the audio transcribed so far.
+    func advance(toEnd end: Double, total: Double) -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        if end > maxEnd { maxEnd = end }
+        return min(1, max(0, maxEnd / total))
     }
 }

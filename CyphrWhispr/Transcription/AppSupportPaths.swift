@@ -55,6 +55,22 @@ enum AppSupportPaths {
         historyRoot.appendingPathComponent("vault.db", isDirectory: false)
     }
 
+    /// Folder holding the saved full-text transcripts of ad-hoc *file*
+    /// transcriptions (one JSON per recents entry, keyed by the entry's UUID).
+    /// Created on first access. Application Support, not Caches: these are the
+    /// user's transcription results, and re-deriving one means re-running the
+    /// whole audio through Whisper — exactly what saving them avoids.
+    ///
+    /// Plain JSON, NOT the encrypted vault: file transcripts also mirror into
+    /// the SQLCipher History vault when History is enabled, but this archive is
+    /// the always-available copy so "Reopen" works whether or not the user has
+    /// turned History on.
+    static var transcriptsRoot: URL {
+        let url = appSupportRoot.appendingPathComponent("transcripts", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     /// True if the model has been fully downloaded (folder exists and has at
     /// least one .mlmodelc subdirectory inside).
     static func isModelDownloaded(_ variantID: String) -> Bool {

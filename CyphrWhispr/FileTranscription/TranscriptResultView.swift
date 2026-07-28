@@ -117,11 +117,19 @@ struct TranscriptResultView: View {
             ProgressView(value: p)
                 .tint(prefs.accent)
                 .frame(maxWidth: 320)
-        case .transcribing:
-            ProgressView()
-                .progressViewStyle(.circular)
-                .tint(prefs.accent)
-                .controlSize(.regular)
+        case .transcribing(let p):
+            // Determinate bar once the first segment lands; until then (model
+            // load + first window) a spinner, since 0% would read as stuck.
+            if p > 0 {
+                ProgressView(value: p)
+                    .tint(prefs.accent)
+                    .frame(maxWidth: 320)
+            } else {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(prefs.accent)
+                    .controlSize(.regular)
+            }
         default:
             EmptyView()
         }
@@ -131,7 +139,9 @@ struct TranscriptResultView: View {
         switch service.status {
         case .idle:                return "Preparing…"
         case .decoding(let p):     return "Decoding audio · \(Int((p * 100).rounded()))%"
-        case .transcribing:        return "Whisper is transcribing…"
+        case .transcribing(let p): return p > 0
+                                        ? "Transcribing · \(Int((p * 100).rounded()))%"
+                                        : "Whisper is transcribing…"
         default:                   return ""
         }
     }
@@ -171,6 +181,7 @@ struct TranscriptResultView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer()
+            languageMenu
             CWButton(title: "Copy",
                      variant: .ghost,
                      indicator: .glyph("⌘")) {
@@ -190,6 +201,75 @@ struct TranscriptResultView: View {
         let words = t.plainText.split { $0.isWhitespace }.count
         let segs  = t.segments.count
         return "\(words) WORDS · \(segs) SEGMENTS · \(durationLabel(t.durationSeconds))"
+    }
+
+    // MARK: - Per-file language override
+    //
+    // Only meaningful on a multilingual model (an `.en` model has no other
+    // language token to emit). Picking a language re-runs Whisper against the
+    // already-decoded audio via `retranscribe(languageCode:)` — the service
+    // flips back to `.transcribing`, so the footer is briefly replaced by the
+    // progress spinner and returns when the new pass lands. This is the
+    // recovery path when auto-detect guesses wrong on a short or ambiguous clip.
+
+    @ViewBuilder private var languageMenu: some View {
+        if prefs.activeModelSupportsLanguageChoice {
+            Menu {
+                languageMenuItem(label: "Auto-detect",
+                                 code: TranscriptionLanguageMode.autoCode,
+                                 isSelected: isAutoLanguage)
+                Divider()
+                ForEach(TranscriptionLanguageCatalog.supported) { lang in
+                    languageMenuItem(label: lang.displayName,
+                                     code: lang.code,
+                                     isSelected: service.languageCode == lang.code)
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Text("LANG")
+                        .font(CWFont.mono(size: CWFont.s10, weight: .semibold))
+                        .tracking(1.4)
+                        .foregroundColor(.cwFg3)
+                    Text(currentLanguageLabel)
+                        .font(CWFont.mono(size: CWFont.s11, weight: .semibold))
+                        .foregroundColor(.cwFg1)
+                    Text("⌄")
+                        .font(CWFont.mono(size: CWFont.s11, weight: .regular))
+                        .foregroundColor(.cwFg3)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Re-transcribe this file in a specific language")
+        }
+    }
+
+    private func languageMenuItem(label: String, code: String, isSelected: Bool) -> some View {
+        Button {
+            service.retranscribe(languageCode: code)
+        } label: {
+            // A leading checkmark marks the active choice. SwiftUI's macOS
+            // Menu doesn't surface a native selected-state for plain buttons,
+            // so we prefix the glyph ourselves.
+            Text(isSelected ? "✓  \(label)" : "    \(label)")
+        }
+    }
+
+    /// True when the active language is either auto-detect variant — both read
+    /// as "Auto" to the user.
+    private var isAutoLanguage: Bool {
+        service.languageCode == TranscriptionLanguageMode.autoCode
+            || service.languageCode == TranscriptionLanguageMode.autoPerPhraseCode
+    }
+
+    /// Short label for the menu button: "Auto" for detect mode, otherwise the
+    /// language's display name (falling back to the upper-cased code for any
+    /// value not in the curated catalog).
+    private var currentLanguageLabel: String {
+        if isAutoLanguage { return "Auto" }
+        return TranscriptionLanguageCatalog.language(for: service.languageCode)?.displayName
+            ?? service.languageCode.uppercased()
     }
 
     // MARK: - Failure state
