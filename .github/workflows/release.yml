@@ -23,8 +23,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+      # Not pinned to a specific Xcode_<version>.app — GitHub rotates the
+      # runner images, and a hard pin turns an image update into a failed
+      # release on a step unrelated to our code. Versions are printed so a
+      # toolchain-caused failure stays obvious in the log.
+      - name: Show toolchain versions
+        run: |
+          xcode-select -p
+          xcodebuild -version
 
       - name: Install XcodeGen + create-dmg
         run: brew install xcodegen create-dmg
