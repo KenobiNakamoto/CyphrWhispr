@@ -263,4 +263,34 @@ final class PreferencesStorePolishTests: XCTestCase {
         // edits so re-customising restores them rather than wiping the slate.
         XCTAssertEqual(prefs.polishCustomPrompt, "user's careful tuning, do not lose")
     }
+
+    func testSavePolishPromptStoresCustomText() {
+        let prefs = PreferencesStore.shared
+        prefs.polishPromptIsCustomised = false
+        prefs.savePolishPrompt("only fix typos, change nothing else")
+        XCTAssertTrue(prefs.polishPromptIsCustomised)
+        XCTAssertEqual(prefs.polishCustomPrompt, "only fix typos, change nothing else")
+        XCTAssertEqual(prefs.effectivePolishPrompt, "only fix typos, change nothing else")
+    }
+
+    func testSavePolishPromptWithDefaultTextLeavesCustomisedMode() {
+        let prefs = PreferencesStore.shared
+        prefs.polishCustomPrompt = "some earlier customisation"
+        prefs.polishPromptIsCustomised = true
+        // Saving the default prompt verbatim is the user undoing their
+        // customisation — it must drop back to read-only default mode rather
+        // than persist a "custom" prompt that just is the default.
+        prefs.savePolishPrompt(CleanupPrompt.defaultPrompt)
+        XCTAssertFalse(prefs.polishPromptIsCustomised)
+        XCTAssertEqual(prefs.effectivePolishPrompt, CleanupPrompt.defaultPrompt)
+    }
+
+    func testSavePolishPromptTreatsWhitespacePaddedDefaultAsDefault() {
+        let prefs = PreferencesStore.shared
+        prefs.polishPromptIsCustomised = true
+        // Trailing newlines from the text editor must not trick the
+        // equals-default check into storing a redundant custom prompt.
+        prefs.savePolishPrompt("\n\n" + CleanupPrompt.defaultPrompt + "   \n")
+        XCTAssertFalse(prefs.polishPromptIsCustomised)
+    }
 }

@@ -27,6 +27,11 @@ final class PreferencesStore: ObservableObject {
         static let hideMenuBarIcon = "General.hideMenuBarIcon"
         static let activationMode = "General.activationMode"
         static let inhibitWhileTyping = "Shortcut.inhibitWhileTyping"
+        // History tab — opt-in switch + retention policy.
+        static let historyEnabled = "History.enabled"
+        static let historyRetention = "History.retention"
+        static let historyRetentionDays = "History.retentionDays"
+        static let historyRetentionEntryLimit = "History.retentionEntryLimit"
     }
 
     /// How the hotkey turns dictation on and off. **Push-to-talk** (default)
@@ -46,6 +51,31 @@ final class PreferencesStore: ObservableObject {
             }
         }
     }
+
+    /// How long transcription history is kept. `.forever` keeps every
+    /// entry; `.days` prunes anything older than `historyRetentionDays`;
+    /// `.entries` keeps only the most recent `historyRetentionEntryLimit`.
+    /// Persisted now and surfaced in Settings → History; the actual
+    /// pruning runs once the Phase 4 encrypted `HistoryStore` ships.
+    enum HistoryRetention: String, CaseIterable, Identifiable, Codable {
+        case forever = "forever"
+        case days    = "days"
+        case entries = "entries"
+        var id: String { rawValue }
+        /// Short label for the segmented control in Settings → History.
+        var label: String {
+            switch self {
+            case .forever: return "Forever"
+            case .days:    return "By age"
+            case .entries: return "By count"
+            }
+        }
+    }
+
+    /// Day-count choices offered when retention is `.days`.
+    static let historyRetentionDayChoices = [7, 14, 30, 60, 90, 180]
+    /// Entry-count choices offered when retention is `.entries`.
+    static let historyRetentionEntryChoices = [50, 100, 250, 500, 1000]
 
     /// The original brand violet — what the app ships with and what the
     /// "Reset" button restores to. Color literal keeps tests + previews from
@@ -202,6 +232,48 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
+    // MARK: - History
+    //
+    // `.forever` is the default retention — we never silently drop a user's
+    // data without them choosing a pruning policy first. The day / entry
+    // values are kept independently so switching policy back and forth
+    // doesn't lose the other axis's setting.
+
+    /// Master switch for the encrypted transcription history. Off by default
+    /// — recording dictation is strictly opt-in. `HistoryService` owns the
+    /// open/close flow; this flag is the persisted record of the user's
+    /// choice and what the History tab's toggle reflects.
+    @Published var historyEnabled: Bool {
+        didSet {
+            guard historyEnabled != oldValue else { return }
+            UserDefaults.standard.set(historyEnabled, forKey: Key.historyEnabled)
+        }
+    }
+
+    /// Active retention policy: keep forever, prune by age, or prune by count.
+    @Published var historyRetention: HistoryRetention {
+        didSet {
+            guard historyRetention != oldValue else { return }
+            UserDefaults.standard.set(historyRetention.rawValue, forKey: Key.historyRetention)
+        }
+    }
+
+    /// Age cap (in days) used when `historyRetention == .days`.
+    @Published var historyRetentionDays: Int {
+        didSet {
+            guard historyRetentionDays != oldValue else { return }
+            UserDefaults.standard.set(historyRetentionDays, forKey: Key.historyRetentionDays)
+        }
+    }
+
+    /// Entry cap used when `historyRetention == .entries`.
+    @Published var historyRetentionEntryLimit: Int {
+        didSet {
+            guard historyRetentionEntryLimit != oldValue else { return }
+            UserDefaults.standard.set(historyRetentionEntryLimit, forKey: Key.historyRetentionEntryLimit)
+        }
+    }
+
     private init() {
         let defaults = UserDefaults.standard
         let storedModel = defaults.string(forKey: Key.activeModelID)
@@ -268,6 +340,22 @@ final class PreferencesStore: ObservableObject {
         } else {
             self.inhibitWhileTyping = defaults.bool(forKey: Key.inhibitWhileTyping)
         }
+
+        // History defaults: recording OFF (opt-in), retention keep-everything.
+        // The day / entry caps carry sensible mid-range defaults so the
+        // dropdowns aren't empty the first time a policy is selected
+        // (`integer(forKey:)` returns 0 when the key is absent).
+        self.historyEnabled = defaults.bool(forKey: Key.historyEnabled)
+        if let retentionRaw = defaults.string(forKey: Key.historyRetention),
+           let retention = HistoryRetention(rawValue: retentionRaw) {
+            self.historyRetention = retention
+        } else {
+            self.historyRetention = .forever
+        }
+        let storedDays = defaults.integer(forKey: Key.historyRetentionDays)
+        self.historyRetentionDays = storedDays == 0 ? 30 : storedDays
+        let storedLimit = defaults.integer(forKey: Key.historyRetentionEntryLimit)
+        self.historyRetentionEntryLimit = storedLimit == 0 ? 100 : storedLimit
     }
 
     /// Mark first-run as done; called once the user has accepted (or changed
@@ -324,8 +412,9 @@ final class PreferencesStore: ObservableObject {
     }
 
     /// User clicks "Customise prompt": flip into customised mode. Seeds the
-    /// editable text with whatever they were just looking at (the default)
-    /// so they can edit-in-place rather than starting from blank.
+    /// editable text with the default prompt so they edit-in-place rather
+    /// than starting from a blank box. The Polish tab edits a draft copy of
+    /// this and only writes it back through `savePolishPrompt(_:)`.
     func enablePolishCustomPrompt() {
         if !polishPromptIsCustomised {
             polishCustomPrompt = CleanupPrompt.defaultPrompt
@@ -333,13 +422,31 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
-    /// User clicks "Reset to default": flip out of customised mode. We DON'T
-    /// wipe `polishCustomPrompt` — keeping the previous edits means clicking
-    /// Customise again restores the user's last version rather than the
-    /// pristine default. (If they want to start over, the editable textarea
-    /// has a "Restore default text" affordance.)
+    /// User clicks "Default" in the prompt editor: stop using a custom prompt
+    /// and fall back to the read-only default. We DON'T wipe
+    /// `polishCustomPrompt`; it's harmless to keep, and re-entering customised
+    /// mode reseeds it from the default anyway.
     func resetPolishPrompt() {
         polishPromptIsCustomised = false
+    }
+
+    /// User clicks "Save" in the prompt editor: commit the edited draft as
+    /// the prompt dictation will use from now on.
+    ///
+    /// If the edited text is the default prompt verbatim (whitespace aside),
+    /// drop back to read-only default mode instead of storing a "custom"
+    /// prompt that merely duplicates the default — that keeps the Polish
+    /// card's default/customised label honest.
+    func savePolishPrompt(_ edited: String) {
+        let normalise: (String) -> String = {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if normalise(edited) == normalise(CleanupPrompt.defaultPrompt) {
+            polishPromptIsCustomised = false
+        } else {
+            polishCustomPrompt = edited
+            polishPromptIsCustomised = true
+        }
     }
 }
 
